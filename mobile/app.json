@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "mobile-init-tmp",
+    "slug": "mobile-init-tmp",
+    "scheme": "financeapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.financeapp.mobile",
+      "associatedDomains": [
+        "applinks:financeapp.app"
+      ]
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.financeapp.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "financeapp",
+              "host": "verify-email"
+            },
+            {
+              "scheme": "financeapp",
+              "host": "reset-password"
+            },
+            {
+              "scheme": "financeapp",
+              "host": "verify-new-email"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-notifications",
+      "expo-screen-capture",
+      "expo-device"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8929840f-7d2b-4125-a0ff-8e3483722852"
+      }
+    }
+  }
+}
