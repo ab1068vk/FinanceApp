@@ -228,6 +228,10 @@ router.get('/notification-settings', requireAuth, authController.getNotification
 router.put('/notification-settings', requireAuth, [
   body('preferences').isObject().withMessage('preferences must be an object'),
 ], validate, authController.updateNotificationSettings);
+router.get('/notifications', requireAuth, authController.getNotifications);
+router.patch('/notifications/:id/read', requireAuth, [
+  param('id').isUUID().withMessage('id must be a valid UUID'),
+], validate, authController.markNotificationRead);
 router.get('/data', requireAuth, authController.exportMyData);
 router.delete('/data', requireAuth, authController.deleteMyData);
 router.delete('/account', requireAuth, [

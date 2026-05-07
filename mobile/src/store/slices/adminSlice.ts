@@ -348,7 +348,12 @@ export const exportUserData = createAsyncThunk<UserExportData, string, { rejectV
 
 export const deleteUserPermanently = createAsyncThunk<{ success: boolean; deleted: boolean; id: string }, string, { rejectValue: string }>('admin/deleteUserPermanently', async (id, { rejectWithValue }) => {
   try {
-    const response = await api.delete<{ success: boolean; deleted: boolean }>(`/api/admin/users/${id}`);
+    let response = await api.delete<{ success: boolean; deleted: boolean; requires_confirmation?: boolean; confirmation_token?: string }>(`/api/admin/users/${id}`);
+    if (response.data.requires_confirmation && response.data.confirmation_token) {
+      response = await api.delete<{ success: boolean; deleted: boolean }>(`/api/admin/users/${id}`, {
+        data: { confirmation_token: response.data.confirmation_token },
+      });
+    }
     return { ...response.data, id };
   } catch (error) {
     return rejectWithValue(errorMessage(error, 'Unable to delete user'));

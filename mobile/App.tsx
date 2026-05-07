@@ -22,6 +22,8 @@ import { getJwtExpiryMs, isJwtExpired } from './src/utils/jwt';
 import { navigateFinanceDeepLink, parseFinanceDeepLink } from './src/navigation/deepLinks';
 import { ThemeProvider } from './src/theme';
 import { useOfflineQueue } from './src/hooks/useOfflineQueue';
+import Constants from 'expo-constants';
+import * as ScreenCapture from 'expo-screen-capture';
 
 const linking: any = {
   prefixes: ['financeapp://auth', 'financeapp://'],
@@ -33,17 +35,8 @@ const linking: any = {
   },
 };
 
-function optionalModule<T>(name: string): T | null {
-  try {
-    return require(name) as T;
-  } catch {
-    return null;
-  }
-}
-
 function appVersion() {
-  const Constants = optionalModule<{ expoConfig?: { version?: string } }>('expo-constants');
-  return Constants?.expoConfig?.version || '1.0.0';
+  return Constants.expoConfig?.version ?? '1.0.0';
 }
 
 function compareVersions(left: string, right: string) {
@@ -138,16 +131,13 @@ function AppBootstrap() {
   }, []);
 
   useEffect(() => {
-    const ScreenCapture = optionalModule<{
-      preventScreenCaptureAsync?: () => Promise<void>;
-      allowScreenCaptureAsync?: () => Promise<void>;
-    }>('expo-screen-capture');
-    if (!ScreenCapture) return;
-    const action = isLocked ? ScreenCapture.allowScreenCaptureAsync : ScreenCapture.preventScreenCaptureAsync;
-    action?.().catch((error) => {
-      console.warn('Unable to update screen capture policy', error);
-    });
-  }, [isLocked]);
+  const action = isLocked
+    ? ScreenCapture.allowScreenCaptureAsync
+    : ScreenCapture.preventScreenCaptureAsync;
+  action?.().catch((error) => {
+    console.warn('Unable to update screen capture policy', error);
+  });
+}, [isLocked]);
 
   useEffect(() => {
     void detectRootedOrJailbrokenDevice().then((suspicious) => {

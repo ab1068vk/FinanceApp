@@ -16,9 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.financeapp.mobile",
-      "associatedDomains": [
-        "applinks:financeapp.app"
-      ]
+      "associatedDomains": ["applinks:financeapp.app"]
     },
     "android": {
       "adaptiveIcon": {
@@ -46,22 +44,14 @@
               "host": "verify-new-email"
             }
           ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
+          "category": ["BROWSABLE", "DEFAULT"]
         }
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-secure-store",
-      "expo-notifications",
-      "expo-screen-capture",
-      "expo-device"
-    ],
+    "plugins": ["expo-secure-store", "expo-notifications"],
     "extra": {
       "eas": {
         "projectId": "8929840f-7d2b-4125-a0ff-8e3483722852"

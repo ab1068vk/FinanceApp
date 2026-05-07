@@ -816,6 +816,33 @@ function updateNotificationSettings(req, res, next) {
   }
 }
 
+function getNotifications(req, res, next) {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const rows = db.prepare(`
+      SELECT id, user_id, type, title, body, data_json, read_at, created_at
+      FROM notifications
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(req.user.id, limit);
+    return res.json({ data: rows });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+function markNotificationRead(req, res, next) {
+  try {
+    const readAt = nowIso();
+    const result = db.prepare('UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ?').run(readAt, req.params.id, req.user.id);
+    if (!result.changes) return res.status(404).json({ error: 'Notification not found' });
+    return res.json({ success: true, read_at: readAt });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 function getMe(req, res) {
   return res.status(200).json(sanitizeUser(req.user));
 }
@@ -1052,6 +1079,8 @@ module.exports = {
   deregisterPushToken,
   getNotificationSettings,
   updateNotificationSettings,
+  getNotifications,
+  markNotificationRead,
   updateMe,
   exportMyData,
   deleteMyData,

@@ -1,13 +1,23 @@
 import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, format, isBefore, startOfDay } from 'date-fns';
 import type { Budget, Transaction } from '../store';
 
-export type NotificationKind = 'announcement' | 'budget' | 'large-transaction' | 'recurring';
+export type NotificationKind = 'announcement' | 'budget' | 'large-transaction' | 'recurring' | 'admin-action';
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
 
 export type AnnouncementNotificationSource = {
   id: string;
   title: string;
   body: string;
+  created_at: string;
+};
+
+export type ServerNotificationSource = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  data_json?: string | null;
+  read_at?: string | null;
   created_at: string;
 };
 
@@ -154,6 +164,28 @@ function announcementNotifications(announcements: AnnouncementNotificationSource
   }));
 }
 
+function serverNotifications(notifications: ServerNotificationSource[]): AppNotification[] {
+  return notifications.map((notification) => {
+    let detail = 'Account notice';
+    try {
+      const data = notification.data_json ? JSON.parse(notification.data_json) : null;
+      if (data?.reason) detail = `Reason: ${data.reason}`;
+    } catch {
+      detail = notification.type;
+    }
+
+    return {
+      id: `server-${notification.id}`,
+      kind: 'admin-action' as const,
+      severity: 'warning' as const,
+      title: notification.title || 'Admin action',
+      message: notification.body || '',
+      detail,
+      date: safeDate(notification.created_at)?.toISOString() || new Date().toISOString(),
+    };
+  });
+}
+
 function isNotification(item: AppNotification | null): item is AppNotification {
   return Boolean(item);
 }
@@ -164,8 +196,15 @@ function severityRank(severity: NotificationSeverity) {
   return 2;
 }
 
-export function buildNotifications(budgets: Budget[], transactions: Transaction[], today = new Date(), announcements: AnnouncementNotificationSource[] = []) {
+export function buildNotifications(
+  budgets: Budget[],
+  transactions: Transaction[],
+  today = new Date(),
+  announcements: AnnouncementNotificationSource[] = [],
+  persistedNotifications: ServerNotificationSource[] = []
+) {
   return [
+    ...serverNotifications(persistedNotifications),
     ...announcementNotifications(announcements),
     ...budgetNotifications(budgets, today),
     ...largeTransactionNotifications(transactions, today),

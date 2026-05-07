@@ -497,9 +497,42 @@ describe('Admin API', () => {
       .send({ reason: 'Support requested account deletion', transaction_action: 'cash' })
       .expect(200);
     expect(deletedAccount.body.transactions).toEqual(expect.objectContaining({ action: 'cash', moved: 1 }));
-    expect(db.prepare('SELECT is_active FROM accounts WHERE id = ?').get(accountToDelete.id).is_active).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE id = ?').get(accountToDelete.id).count).toBe(0);
     expect(db.prepare('SELECT account_id FROM transactions WHERE id = ?').get(movedTransaction.body.id).account_id).not.toBe(accountToDelete.id);
     expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND entity_id = ?').get('ADMIN_DELETED_USER_ACCOUNT', accountToDelete.id).count).toBe(1);
+    const accountDeleteNotification = await request(app)
+      .get('/api/auth/notifications')
+      .set('Authorization', `Bearer ${target.accessToken}`)
+      .expect(200);
+    expect(accountDeleteNotification.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'admin-account-deleted',
+        title: 'Account deleted by admin',
+        body: expect.stringContaining('Support requested account deletion'),
+      }),
+    ]));
+
+    const accountToDeleteWithTransactions = await createAccount(target.accessToken);
+    const deletedTransaction = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${target.accessToken}`)
+      .send({
+        account_id: accountToDeleteWithTransactions.id,
+        category_id: category.id,
+        type: 'expense',
+        amount: 5,
+        description: 'Delete with account',
+        date: new Date().toISOString(),
+      })
+      .expect(201);
+    const deletedAccountWithTransactions = await request(app)
+      .delete(`/api/admin/users/${target.user.id}/accounts/${accountToDeleteWithTransactions.id}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ reason: 'Remove account and transactions', transaction_action: 'delete' })
+      .expect(200);
+    expect(deletedAccountWithTransactions.body.transactions).toEqual(expect.objectContaining({ action: 'delete', deleted: 1 }));
+    expect(db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE id = ?').get(accountToDeleteWithTransactions.id).count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE id = ?').get(deletedTransaction.body.id).count).toBe(0);
 
     await request(app)
       .delete(`/api/admin/transactions/${created.body.id}`)

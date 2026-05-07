@@ -11,7 +11,7 @@ import { DashboardStackParamList } from '../../navigation';
 import { fetchBudgets, Transaction } from '../../store';
 import { useAppDispatch } from '../../store/hooks';
 import { useTheme } from '../../theme';
-import { AppNotification, buildNotifications, NotificationKind, NotificationSeverity } from '../../utils/notifications';
+import { AppNotification, buildNotifications, NotificationKind, NotificationSeverity, ServerNotificationSource } from '../../utils/notifications';
 import type { FeatherIconName } from '../../utils/icons';
 
 type Props = StackScreenProps<DashboardStackParamList, 'Notifications'>;
@@ -21,6 +21,7 @@ type Announcement = { id: string; title: string; body: string; created_at: strin
 const filters: Array<{ key: 'all' | NotificationKind; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'announcement', label: 'Admin' },
+  { key: 'admin-action', label: 'Account' },
   { key: 'budget', label: 'Budgets' },
   { key: 'large-transaction', label: 'Large' },
   { key: 'recurring', label: 'Recurring' },
@@ -28,6 +29,7 @@ const filters: Array<{ key: 'all' | NotificationKind; label: string }> = [
 
 function iconFor(kind: NotificationKind): FeatherIconName {
   if (kind === 'announcement') return 'volume-2';
+  if (kind === 'admin-action') return 'shield';
   if (kind === 'budget') return 'alert-triangle';
   if (kind === 'large-transaction') return 'dollar-sign';
   return 'repeat';
@@ -53,14 +55,21 @@ export default function NotificationsScreen({ navigation }: Props) {
     setError(null);
 
     try {
-      const [settings, budgets, transactionsResponse, announcementsResponse] = await Promise.all([
+      const [settings, budgets, transactionsResponse, announcementsResponse, notificationsResponse] = await Promise.all([
         loadAppSettings(),
         dispatch(fetchBudgets()).unwrap(),
         api.get<TransactionsResponse>('/api/transactions', { params: { page: 1, limit: 100 } }),
         api.get<{ data: Announcement[] }>('/api/announcements'),
+        api.get<{ data: ServerNotificationSource[] }>('/api/auth/notifications', { params: { limit: 50 } }),
       ]);
 
-      const nextNotifications = buildNotifications(budgets, transactionsResponse.data.data, new Date(), announcementsResponse.data.data || []);
+      const nextNotifications = buildNotifications(
+        budgets,
+        transactionsResponse.data.data,
+        new Date(),
+        announcementsResponse.data.data || [],
+        notificationsResponse.data.data || []
+      );
       setNotifications(settings.budgetAlerts ? nextNotifications : nextNotifications.filter((notification) => notification.kind !== 'budget'));
     } catch {
       setNotifications([]);
@@ -82,6 +91,7 @@ export default function NotificationsScreen({ navigation }: Props) {
   const counts = useMemo(() => ({
     all: notifications.length,
     announcement: notifications.filter((item) => item.kind === 'announcement').length,
+    'admin-action': notifications.filter((item) => item.kind === 'admin-action').length,
     budget: notifications.filter((item) => item.kind === 'budget').length,
     'large-transaction': notifications.filter((item) => item.kind === 'large-transaction').length,
     recurring: notifications.filter((item) => item.kind === 'recurring').length,

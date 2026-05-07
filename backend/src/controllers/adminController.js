@@ -54,6 +54,21 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
   );
 }
 
+function createUserNotification(userId, type, title, body, data = {}) {
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, title, body, data_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    userId,
+    type,
+    title,
+    body,
+    JSON.stringify(data),
+    nowIso()
+  );
+}
+
 function mb(bytes) {
   return Number((bytes / 1024 / 1024).toFixed(2));
 }
@@ -1153,16 +1168,29 @@ function deleteUserAccount(req, res, next) {
         transactionResult = { action: 'cash', deleted: 0, moved: result.moved, cash_account_id: result.cashAccountId };
       }
 
-      db.prepare('UPDATE accounts SET is_active = 0, updated_at = ? WHERE id = ? AND user_id = ?').run(deletedAt, req.params.accountId, req.params.id);
       audit(req, 'ADMIN_DELETED_USER_ACCOUNT', 'account', req.params.accountId, account, {
         ...account,
-        is_active: 0,
+        deleted: true,
         deleted_at: deletedAt,
         target_user_id: req.params.id,
         target_user_email: user.email,
         reason,
         transaction_result: transactionResult,
       });
+      createUserNotification(
+        req.params.id,
+        'admin-account-deleted',
+        'Account deleted by admin',
+        `Your account "${account.name}" was deleted by an administrator. Reason: ${reason}`,
+        {
+          account_id: req.params.accountId,
+          account_name: account.name,
+          reason,
+          deleted_at: deletedAt,
+          transaction_result: transactionResult,
+        }
+      );
+      db.prepare('DELETE FROM accounts WHERE id = ? AND user_id = ?').run(req.params.accountId, req.params.id);
     })();
 
     return res.json({ success: true, account_id: req.params.accountId, reason, transactions: transactionResult });
