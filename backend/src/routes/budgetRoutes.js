@@ -13,11 +13,11 @@ const validate = (req, res, next) => {
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
 const decimalAmount = (chain) => chain
-  .isFloat({ min: 0 })
-  .withMessage('amount must be a non-negative number')
+  .isFloat({ min: 0.01 })
+  .withMessage('amount must be a positive number')
   .bail()
   .custom((value) => {
-    if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
       throw new Error('amount must have at most 2 decimal places');
     }
     return true;

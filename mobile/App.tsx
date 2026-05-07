@@ -3,7 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
-import { Alert, AppState, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ErrorBoundary from './src/components/common/ErrorBoundary';
 import LoadingScreen from './src/components/common/LoadingScreen';
@@ -21,6 +21,7 @@ import { autoLockTimeoutMs, getAutoLockPreference } from './src/services/session
 import { getJwtExpiryMs, isJwtExpired } from './src/utils/jwt';
 import { navigateFinanceDeepLink, parseFinanceDeepLink } from './src/navigation/deepLinks';
 import { ThemeProvider } from './src/theme';
+import { useOfflineQueue } from './src/hooks/useOfflineQueue';
 
 const linking: any = {
   prefixes: ['financeapp://auth', 'financeapp://'],
@@ -58,6 +59,7 @@ function compareVersions(left: string, right: string) {
 function AppBootstrap() {
   const dispatch = useAppDispatch();
   const isOnline = useAppSelector((state) => state.ui.isOnline);
+  const { isProcessingQueue } = useOfflineQueue();
   const accessToken = useAppSelector((state) => state.auth.accessToken);
   const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
   const [isRestoringAuth, setIsRestoringAuth] = useState(true);
@@ -296,6 +298,7 @@ function AppBootstrap() {
             if (deepLink) navigateFinanceDeepLink(navigationRef, deepLink);
           }}>
             {!isOnline ? <OfflineBanner /> : null}
+            {isProcessingQueue ? <SyncBanner /> : null}
             {updateBannerVisible ? <UpdateBanner onDismiss={() => setUpdateBannerVisible(false)} /> : null}
             {isLocked ? (
               <SecurityLockScreen
@@ -352,6 +355,15 @@ function OfflineBanner() {
   );
 }
 
+function SyncBanner() {
+  return (
+    <View style={styles.syncBanner}>
+      <ActivityIndicator color="#FFFFFF" size="small" />
+      <Text style={styles.offlineText}>Syncing saved changes</Text>
+    </View>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -374,6 +386,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '900',
+  },
+  syncBanner: {
+    backgroundColor: '#0F3460',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
   updateBanner: {
     backgroundColor: '#0F3460',

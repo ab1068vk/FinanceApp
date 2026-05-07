@@ -1,5 +1,7 @@
 ﻿import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import api from '../../services/api';
+import { showToast } from '../../components/common/Toast';
+import { enqueue } from '../../utils/offlineQueue';
 
 export type TransactionType = 'income' | 'expense' | 'transfer';
 
@@ -121,6 +123,17 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function isNetworkError(error: unknown) {
+  if (typeof error === 'object' && error !== null && 'response' in error) {
+    return !(error as { response?: unknown }).response;
+  }
+  return error instanceof Error;
+}
+
+function tempId() {
+  return `offline-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function cleanFilters(filters: TransactionFilters) {
   return Object.fromEntries(
     Object.entries(filters).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -168,6 +181,18 @@ export const createTransaction = createAsyncThunk<Transaction | Transaction[], C
       }
       return payload as Transaction;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'POST', url: '/api/transactions', data, description: 'Create transaction' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return {
+          ...data,
+          id: tempId(),
+          category_id: data.category_id || '',
+          date: data.date,
+          recurring: data.recurring ? 1 : 0,
+          created_at: new Date().toISOString(),
+        };
+      }
       return rejectWithValue(errorMessage(error, 'Unable to save transaction'));
     }
   }
@@ -180,6 +205,11 @@ export const updateTransaction = createAsyncThunk<Transaction, { id: string; dat
       const response = await api.put<Transaction>(`/api/transactions/${id}`, data);
       return response.data;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'PUT', url: `/api/transactions/${id}`, data, description: 'Update transaction' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return { id, ...(data as Partial<Transaction>) } as Transaction;
+      }
       return rejectWithValue(errorMessage(error, 'Unable to update transaction'));
     }
   }
@@ -192,6 +222,11 @@ export const deleteTransaction = createAsyncThunk<string, string, { rejectValue:
       await api.delete(`/api/transactions/${id}`, { data: { confirm: true } });
       return id;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'DELETE', url: `/api/transactions/${id}`, data: { confirm: true }, description: 'Delete transaction' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return id;
+      }
       return rejectWithValue(errorMessage(error, 'Unable to delete transaction'));
     }
   }
@@ -204,6 +239,11 @@ export const bulkDeleteTransactions = createAsyncThunk<string[], string[], { rej
       await api.delete('/api/transactions/bulk', { data: { transaction_ids: ids, confirm: true } });
       return ids;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'DELETE', url: '/api/transactions/bulk', data: { transaction_ids: ids, confirm: true }, description: 'Delete selected transactions' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return ids;
+      }
       return rejectWithValue(errorMessage(error, 'Unable to delete selected transactions'));
     }
   }
@@ -216,6 +256,11 @@ export const bulkUpdateTransactionCategory = createAsyncThunk<{ ids: string[]; c
       await api.patch('/api/transactions/bulk/category', { transaction_ids: ids, category_id: categoryId });
       return { ids, categoryId };
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'PATCH', url: '/api/transactions/bulk/category', data: { transaction_ids: ids, category_id: categoryId }, description: 'Update selected transactions' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return { ids, categoryId };
+      }
       return rejectWithValue(errorMessage(error, 'Unable to update selected transactions'));
     }
   }
@@ -304,8 +349,8 @@ const transactionsSlice = createSlice({
         state.transactions = [...created, ...state.transactions];
       })
       .addCase(updateTransaction.fulfilled, (state, action) => {
-        state.transactions = state.transactions.map((transaction) => transaction.id === action.payload.id ? action.payload : transaction);
-        state.selectedTransaction = action.payload;
+        state.transactions = state.transactions.map((transaction) => transaction.id === action.payload.id ? { ...transaction, ...action.payload } : transaction);
+        state.selectedTransaction = state.selectedTransaction ? { ...state.selectedTransaction, ...action.payload } : action.payload;
       })
       .addCase(deleteTransaction.fulfilled, (state, action) => {
         state.transactions = state.transactions.filter((transaction) => transaction.id !== action.payload);

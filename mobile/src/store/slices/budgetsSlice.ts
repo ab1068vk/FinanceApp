@@ -1,6 +1,8 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import api from '../../services/api';
+import { showToast } from '../../components/common/Toast';
 import { ListPayload, unwrapList } from '../../types/api';
+import { enqueue } from '../../utils/offlineQueue';
 
 export type Budget = {
   id: string;
@@ -23,6 +25,14 @@ type BudgetsState = {
   error: string | null;
 };
 
+export type CreateBudgetData = {
+  category_id: string;
+  amount: number;
+  period: 'monthly' | 'weekly' | 'yearly';
+  start_date: string;
+  end_date?: string | null;
+};
+
 const initialState: BudgetsState = {
   budgets: [],
   isLoading: false,
@@ -39,6 +49,17 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function isNetworkError(error: unknown) {
+  if (typeof error === 'object' && error !== null && 'response' in error) {
+    return !(error as { response?: unknown }).response;
+  }
+  return error instanceof Error;
+}
+
+function tempId() {
+  return `offline-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export const fetchBudgets = createAsyncThunk<Budget[], void, { rejectValue: string }>(
   'budgets/fetchBudgets',
   async (_, { rejectWithValue }) => {
@@ -47,6 +68,23 @@ export const fetchBudgets = createAsyncThunk<Budget[], void, { rejectValue: stri
       return unwrapList(response.data);
     } catch (error) {
       return rejectWithValue(errorMessage(error, 'Unable to load budgets'));
+    }
+  }
+);
+
+export const createBudget = createAsyncThunk<Budget, CreateBudgetData, { rejectValue: string }>(
+  'budgets/createBudget',
+  async (data, { rejectWithValue }) => {
+    try {
+      const response = await api.post<Budget>('/api/budgets', data);
+      return response.data;
+    } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'POST', url: '/api/budgets', data, description: 'Create budget' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return { ...data, id: tempId(), current_spending: 0, remaining: data.amount };
+      }
+      return rejectWithValue(errorMessage(error, 'Unable to create budget'));
     }
   }
 );
@@ -82,6 +120,9 @@ const budgetsSlice = createSlice({
       .addCase(fetchBudgets.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload || 'Unable to load budgets';
+      })
+      .addCase(createBudget.fulfilled, (state, action) => {
+        state.budgets.unshift(action.payload);
       });
   },
 });

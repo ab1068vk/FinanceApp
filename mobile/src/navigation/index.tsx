@@ -32,6 +32,7 @@ import SettingsScreen from '../screens/profile/SettingsScreen';
 import ChangePasswordScreen from '../screens/profile/ChangePasswordScreen';
 import EditProfileScreen from '../screens/profile/EditProfileScreen';
 import ActiveSessionsScreen from '../screens/profile/ActiveSessionsScreen';
+import OfflineQueueScreen from '../screens/profile/OfflineQueueScreen';
 import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import UsersListScreen from '../screens/admin/UsersListScreen';
 import UserDetailScreen from '../screens/admin/UserDetailScreen';
@@ -85,6 +86,7 @@ export type ProfileStackParamList = {
   EditProfile: undefined;
   ChangePassword: undefined;
   ActiveSessions: undefined;
+  OfflineQueue: undefined;
 };
 
 export type AdminStackParamList = {
@@ -270,6 +272,7 @@ function ProfileStackScreen() {
       <ProfileStack.Screen name="EditProfile" component={EditProfileScreen} options={{ title: 'Edit Profile', presentation: 'modal' }} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ title: 'Change Password' }} />
       <ProfileStack.Screen name="ActiveSessions" component={ActiveSessionsScreen} options={{ title: 'Active Sessions' }} />
+      <ProfileStack.Screen name="OfflineQueue" component={OfflineQueueScreen} options={{ title: 'Offline Queue' }} />
     </ProfileStack.Navigator>
   );
 }

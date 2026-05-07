@@ -5,10 +5,11 @@ require('winston-daily-rotate-file');
 
 const logDir = path.join(__dirname, '..', '..', 'logs');
 fs.mkdirSync(logDir, { recursive: true });
+const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 function sanitizeLogText(value) {
   return String(value)
-    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(ansiEscapePattern, '')
     .replace(/[\r\n]/g, ' ');
 }
 

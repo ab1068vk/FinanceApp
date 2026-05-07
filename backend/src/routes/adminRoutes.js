@@ -47,6 +47,16 @@ const decimalMoney = (chain, field) => chain
   .withMessage(`${field} must be a non-negative number`)
   .bail()
   .custom((value) => {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+      throw new Error(`${field} must have at most 2 decimal places`);
+    }
+    return true;
+  });
+const signedDecimalMoney = (chain, field) => chain
+  .isFloat()
+  .withMessage(`${field} must be a number`)
+  .bail()
+  .custom((value) => {
     if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
       throw new Error(`${field} must have at most 2 decimal places`);
     }
@@ -54,7 +64,8 @@ const decimalMoney = (chain, field) => chain
   });
 const paging = [
   query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
-  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+  query('limit').optional().isInt({ min: 1, max: 200 }).withMessage('limit must be between 1 and 200'),
+  query('page_size').optional().isInt({ min: 1, max: 200 }).withMessage('page_size must be between 1 and 200'),
 ];
 const exportPaging = [
   query('limit').optional().isInt({ min: 1, max: 50000 }).withMessage('limit must be between 1 and 50000'),
@@ -67,9 +78,12 @@ const transactionFilters = [
   query('type').optional().isIn(transactionTypes).withMessage(`type must be one of: ${transactionTypes.join(', ')}`),
   query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
   query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
+  query('date_from').optional().custom(isIsoDate).withMessage('date_from must be a valid ISO date'),
+  query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
   decimalMoney(query('min_amount').optional(), 'min_amount'),
   decimalMoney(query('max_amount').optional(), 'max_amount'),
   query('include_deleted').optional().isBoolean().withMessage('include_deleted must be boolean'),
+  query('admin_deleted').optional().isBoolean().withMessage('admin_deleted must be boolean'),
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
   ...paging,
 ];
@@ -213,6 +227,10 @@ router.post('/security-blocks', [
 router.delete('/security-blocks/:ip', param('ip').isString().isLength({ min: 3, max: 80 }), validate, adminController.clearSecurityAddress);
 router.get('/deleted-users', [
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
+  query('date_from').optional().custom(isIsoDate).withMessage('date_from must be a valid ISO date'),
+  query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
+  query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
+  query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
   ...paging,
 ], validate, adminController.getDeletedUsers);
 router.get('/deleted-users/:id', idParam, validate, adminController.getDeletedUser);
@@ -222,6 +240,7 @@ router.get('/users', [
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
   ...paging,
 ], validate, adminController.getUsers);
+router.get('/users/:id/sessions', [idParam, ...paging], validate, adminController.getUserSessions);
 router.get('/users/:id', idParam, validate, adminController.getUser);
 router.get('/users/:id/spending-by-category', [idParam, query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'), query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date')], validate, adminController.getUserSpendingByCategory);
 router.get('/users/:id/login-history', [idParam, query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'), query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'), ...paging], validate, adminController.getUserLoginHistory);
@@ -242,17 +261,7 @@ router.delete('/users/:id/accounts/:accountId', [
 router.post('/users/:id/accounts/:accountId/correction', requireConfirmation('balance_correction'), [
   idParam,
   param('accountId').isUUID().withMessage('accountId must be a valid UUID'),
-  body('target_balance')
-    .notEmpty()
-    .isFloat()
-    .withMessage('target_balance must be a number')
-    .bail()
-    .custom((value) => {
-      if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
-        throw new Error('target_balance must have at most 2 decimal places');
-      }
-      return true;
-    }),
+  signedDecimalMoney(body('target_balance').notEmpty(), 'target_balance'),
   body('reason').isString().isLength({ min: 5, max: 500 }).withMessage('reason must be 5-500 characters'),
 ], validate, adminController.createAccountBalanceCorrection);
 router.get('/users/:id/export', [idParam, ...exportPaging], validate, adminController.exportUserData);
@@ -270,6 +279,8 @@ router.get('/audit-logs', [
   query('action').optional().isString().isLength({ max: 100 }).withMessage('action must be up to 100 characters'),
   query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
   query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
+  query('date_from').optional().custom(isIsoDate).withMessage('date_from must be a valid ISO date'),
+  query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
   ...paging,
 ], validate, adminController.getAuditLogs);
 router.get('/users/:id/transactions', [idParam, ...transactionFilters], validate, adminController.getUserTransactions);

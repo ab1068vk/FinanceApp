@@ -146,6 +146,50 @@ describe('Admin API', () => {
     expect(Array.isArray(detail.body.recent_audit_logs)).toBe(true);
   });
 
+  test('paginates admin users and active sessions with page_size metadata', async () => {
+    const sessionTarget = await createUserSession('session-page');
+
+    const users = await request(app)
+      .get('/api/admin/users?page=1&page_size=1')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+
+    expect(Array.isArray(users.body.data)).toBe(true);
+    expect(users.body.data).toHaveLength(1);
+    expect(users.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(users.body.pagination.total_pages).toBe(Math.ceil(users.body.pagination.total_count / 1));
+
+    await request(app)
+      .get('/api/admin/users?page=0')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(400);
+
+    const sessions = await request(app)
+      .get(`/api/admin/users/${sessionTarget.user.id}/sessions?page=1&page_size=1`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+
+    expect(Array.isArray(sessions.body.data)).toBe(true);
+    expect(sessions.body.data).toHaveLength(1);
+    expect(sessions.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(sessions.body.pagination.total_pages).toBe(Math.ceil(sessions.body.pagination.total_count / 1));
+
+    await request(app)
+      .get(`/api/admin/users/${sessionTarget.user.id}/sessions?page=0`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(400);
+  });
+
   test('returns user analytics, login history, budget performance, and export data', async () => {
     const spending = await request(app)
       .get(`/api/admin/users/${managedUser.user.id}/spending-by-category`)
@@ -230,6 +274,25 @@ describe('Admin API', () => {
       .expect(200);
 
     expect(authFailureLogs.body.data.some((log) => log.user_id === managedUser.user.id)).toBe(true);
+
+    const auditPage = await request(app)
+      .get('/api/admin/audit-logs?page=1&page_size=1')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(Array.isArray(auditPage.body.data)).toBe(true);
+    expect(auditPage.body.data).toHaveLength(1);
+    expect(auditPage.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(auditPage.body.pagination.total_pages).toBe(Math.ceil(auditPage.body.pagination.total_count / 1));
+
+    await request(app)
+      .get('/api/admin/audit-logs?page=0')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(400);
 
     const dashboard = await request(app)
       .get('/api/admin/dashboard')
@@ -368,6 +431,25 @@ describe('Admin API', () => {
       .expect(200);
     expect(globalList.body.data.some((tx) => tx.id === created.body.id && tx.user_email === target.credentials.email)).toBe(true);
 
+    const transactionPage = await request(app)
+      .get('/api/admin/transactions?page=1&page_size=1')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(Array.isArray(transactionPage.body.data)).toBe(true);
+    expect(transactionPage.body.data).toHaveLength(1);
+    expect(transactionPage.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(transactionPage.body.pagination.total_pages).toBe(Math.ceil(transactionPage.body.pagination.total_count / 1));
+
+    await request(app)
+      .get('/api/admin/transactions?page=0')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(400);
+
     const detail = await request(app)
       .get(`/api/admin/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
@@ -436,6 +518,12 @@ describe('Admin API', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
     expect(includeDeleted.body.data.some((tx) => tx.id === created.body.id && tx.admin_delete_reason === 'Fraud review duplicate')).toBe(true);
+
+    const adminDeleted = await request(app)
+      .get('/api/admin/transactions?admin_deleted=true')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(adminDeleted.body.data.some((tx) => tx.id === created.body.id)).toBe(true);
   });
 
   test('admin date-only range filters include the full selected day', async () => {
@@ -732,6 +820,31 @@ describe('Admin API', () => {
       account_count: expect.any(Number),
       transaction_count: expect.any(Number),
     }));
+
+    const deletedUsersPage = await request(app)
+      .get('/api/admin/deleted-users?page=1&page_size=1')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(Array.isArray(deletedUsersPage.body.data)).toBe(true);
+    expect(deletedUsersPage.body.data).toHaveLength(1);
+    expect(deletedUsersPage.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(deletedUsersPage.body.pagination.total_pages).toBe(Math.ceil(deletedUsersPage.body.pagination.total_count / 1));
+
+    const deletedUsersByDate = await request(app)
+      .get(`/api/admin/deleted-users?date_from=${encodeURIComponent(new Date(Date.now() - 60 * 1000).toISOString())}&date_to=${encodeURIComponent(new Date(Date.now() + 60 * 1000).toISOString())}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(deletedUsersByDate.body.data.some((row) => row.id === deleted.body.archive_id)).toBe(true);
+
+    await request(app)
+      .get('/api/admin/deleted-users?page=0')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(400);
 
     const deletedDetail = await request(app)
       .get(`/api/admin/deleted-users/${deleted.body.archive_id}`)

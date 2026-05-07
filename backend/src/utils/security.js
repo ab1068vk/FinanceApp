@@ -92,7 +92,8 @@ function sanitizeUser(user) {
     return user;
   }
 
-  const { password_hash, ...safeUser } = user;
+  const safeUser = { ...user };
+  delete safeUser.password_hash;
   return safeUser;
 }
 

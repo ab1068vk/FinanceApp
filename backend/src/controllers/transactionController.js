@@ -257,15 +257,17 @@ function createTransaction(req, res, next) {
 function getTransactions(req, res, next) {
   try {
     const page = Math.max(Number(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(req.query.limit) || DEFAULT_TRANSACTION_LIST_LIMIT, 1), MAX_TRANSACTION_LIST_LIMIT);
+    const limit = Math.min(Math.max(Number(req.query.limit || req.query.page_size) || DEFAULT_TRANSACTION_LIST_LIMIT, 1), MAX_TRANSACTION_LIST_LIMIT);
     const offset = (page - 1) * limit;
     const where = ['t.user_id = ?', 't.admin_deleted_at IS NULL'];
     const params = [req.user.id];
     for (const [key, column] of [['account_id', 't.account_id'], ['category_id', 't.category_id'], ['type', 't.type']]) {
       if (req.query[key]) { where.push(`${column} = ?`); params.push(req.query[key]); }
     }
-    if (req.query.start_date) { where.push('t.date >= ?'); params.push(rangeStartIso(req.query.start_date)); }
-    if (req.query.end_date) { where.push('t.date <= ?'); params.push(rangeEndIso(req.query.end_date)); }
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) { where.push('t.date >= ?'); params.push(rangeStartIso(startDate)); }
+    if (endDate) { where.push('t.date <= ?'); params.push(rangeEndIso(endDate)); }
     if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(amountToCents(req.query.min_amount)); }
     if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(amountToCents(req.query.max_amount)); }
     if (req.query.search) {
@@ -413,8 +415,10 @@ function getTransactionSummary(req, res, next) {
   try {
     const where = ['t.user_id = ?', 't.admin_deleted_at IS NULL'];
     const params = [req.user.id];
-    if (req.query.start_date) { where.push('t.date >= ?'); params.push(rangeStartIso(req.query.start_date)); }
-    if (req.query.end_date) { where.push('t.date <= ?'); params.push(rangeEndIso(req.query.end_date)); }
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) { where.push('t.date >= ?'); params.push(rangeStartIso(startDate)); }
+    if (endDate) { where.push('t.date <= ?'); params.push(rangeEndIso(endDate)); }
     const whereSql = where.join(' AND ');
 
     const totals = db.prepare(`

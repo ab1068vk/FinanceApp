@@ -17,7 +17,7 @@ const moneyFormat = (field, { min, message }) => body(field)
   .withMessage(message)
   .bail()
   .custom((value) => {
-    if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
       throw new Error(`${field} must have at most 2 decimal places`);
     }
     return true;
@@ -28,7 +28,7 @@ const createRules = [
   body('currency').trim().isLength({ min: 3, max: 3 }).isAlpha().withMessage('currency must be a 3-letter code'),
   body('color').matches(/^#[0-9A-Fa-f]{6}$/).withMessage('color must be a valid hex color'),
   body('icon').isString().withMessage('icon must be a string').bail().isLength({ min: 1, max: 50 }).withMessage('icon must be a string up to 50 characters'),
-  moneyFormat('balance', { message: 'balance must be a number' }),
+  moneyFormat('balance', { min: 0, message: 'balance must be a non-negative number' }),
   moneyFormat('overdraft_limit', { min: 0, message: 'overdraft_limit must be a non-negative number' }),
 ];
 const updateRules = [
@@ -37,7 +37,7 @@ const updateRules = [
   body('currency').optional().trim().isLength({ min: 3, max: 3 }).isAlpha().withMessage('currency must be a 3-letter code'),
   body('color').optional().matches(/^#[0-9A-Fa-f]{6}$/).withMessage('color must be a valid hex color'),
   body('icon').optional({ nullable: true }).isString().isLength({ max: 50 }).withMessage('icon must be a string up to 50 characters'),
-  moneyFormat('balance', { message: 'balance must be a number' }),
+  moneyFormat('balance', { min: 0, message: 'balance must be a non-negative number' }),
   moneyFormat('overdraft_limit', { min: 0, message: 'overdraft_limit must be a non-negative number' }),
 ];
 const deleteRules = [

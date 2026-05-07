@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { formatDistanceToNow } from 'date-fns';
 import { useFocusEffect } from '@react-navigation/native';
@@ -8,7 +8,7 @@ import { showToast } from '../../components/common/Toast';
 import { AdminStackParamList } from '../../navigation';
 import api from '../../services/api';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { fetchUsers, AdminUser, UsersFilters } from '../../store/slices/adminSlice';
+import { fetchMoreUsers, fetchUsers, AdminUser, UsersFilters } from '../../store/slices/adminSlice';
 
 type Props = StackScreenProps<AdminStackParamList, 'UsersList'>;
 type Filter = 'all' | 'active' | 'inactive' | 'admin' | 'locked';
@@ -30,6 +30,8 @@ export default function UsersListScreen({ navigation, route }: Props) {
   const dispatch = useAppDispatch();
   const users = useAppSelector((state) => state.admin.users);
   const usersLoading = useAppSelector((state) => state.admin.usersLoading);
+  const usersLoadingMore = useAppSelector((state) => state.admin.usersLoadingMore);
+  const pagination = useAppSelector((state) => state.admin.pagination.users);
   const error = useAppSelector((state) => state.admin.error);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>(route.params?.initialFilter ?? 'all');
@@ -45,6 +47,16 @@ export default function UsersListScreen({ navigation, route }: Props) {
     if (filter === 'locked') params.locked = true;
     dispatch(fetchUsers(params));
   }, [dispatch, search, filter]);
+
+  const loadMoreUsers = useCallback(() => {
+    if (usersLoading || usersLoadingMore || pagination.page >= pagination.totalPages) return;
+    const params: UsersFilters = { search: search.trim() || undefined, page: pagination.page + 1, limit: pagination.limit || 20 };
+    if (filter === 'active') params.is_active = true;
+    if (filter === 'inactive') params.is_active = false;
+    if (filter === 'admin') params.role = 'admin';
+    if (filter === 'locked') params.locked = true;
+    dispatch(fetchMoreUsers(params));
+  }, [dispatch, filter, pagination.limit, pagination.page, pagination.totalPages, search, usersLoading, usersLoadingMore]);
 
   useEffect(() => {
     const timer = setTimeout(loadUsers, 250);
@@ -123,6 +135,8 @@ export default function UsersListScreen({ navigation, route }: Props) {
         keyExtractor={(item) => item.id}
         refreshing={usersLoading}
         onRefresh={loadUsers}
+        onEndReached={loadMoreUsers}
+        onEndReachedThreshold={0.3}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <UserCard
@@ -133,6 +147,7 @@ export default function UsersListScreen({ navigation, route }: Props) {
           />
         )}
         ListEmptyComponent={!usersLoading ? <Text style={[styles.emptyText, error && styles.errorText]}>{error || 'No users match these filters.'}</Text> : null}
+        ListFooterComponent={usersLoadingMore ? <ActivityIndicator color="#E94560" style={styles.footerLoader} /> : null}
       />
     </View>
   );
@@ -196,4 +211,5 @@ const styles = StyleSheet.create({
   bulkText: { flex: 1, color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
   bulkButton: { borderRadius: 999, backgroundColor: '#E94560', paddingHorizontal: 10, paddingVertical: 7 },
   bulkButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
+  footerLoader: { marginVertical: 18 },
 });

@@ -20,7 +20,7 @@ import { StackScreenProps } from '@react-navigation/stack';
 import { showToast } from '../../components/common/Toast';
 import { DatePickerField } from '../../components/common/DatePickerField';
 import api from '../../services/api';
-import { Budget, fetchBudgets } from '../../store';
+import { Budget, createBudget as createBudgetThunk, fetchBudgets } from '../../store';
 import { BudgetsStackParamList } from '../../navigation';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { useTheme } from '../../theme';
@@ -155,13 +155,13 @@ export default function BudgetsScreen({ navigation }: Props) {
     }
 
     try {
-      await api.post('/api/budgets', {
+      await dispatch(createBudgetThunk({
         category_id: selectedCategory,
         amount: parsedAmount,
         period,
         start_date: new Date(startDate).toISOString(),
         end_date: endDate ? new Date(endDate).toISOString() : null,
-      });
+      })).unwrap();
       showToast({ type: 'success', text1: 'Budget created' });
       setModalVisible(false);
       setSelectedCategory('');

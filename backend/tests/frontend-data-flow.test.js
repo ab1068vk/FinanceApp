@@ -20,7 +20,6 @@ const { db, dbPath } = require('../database/db');
 let accessToken;
 let session;
 let account1;
-let account2;
 let expenseCategory;
 let incomeCategory;
 let budgetId;
@@ -61,11 +60,11 @@ describe('Frontend Data Flow - Redux Store Integration', () => {
       .send({ name: 'Main Account', type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card' })
       .expect(201)).body;
 
-    account2 = (await request(app)
+    await request(app)
       .post('/api/accounts')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ name: 'Savings Account', type: 'savings', currency: 'USD', color: '#27AE60', icon: 'dollar-sign' })
-      .expect(201)).body;
+      .expect(201);
 
     const catsResponse = (await request(app)
       .get('/api/categories')

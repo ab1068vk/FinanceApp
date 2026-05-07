@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import { DatePickerField } from '../../components/common/DatePickerField';
 import { AdminStackParamList } from '../../navigation';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { AuditLog, fetchAuditLogs } from '../../store/slices/adminSlice';
+import { AuditLog, fetchAuditLogs, fetchMoreAuditLogs } from '../../store/slices/adminSlice';
 import { useTheme } from '../../theme';
 
 type Props = StackScreenProps<AdminStackParamList, 'AuditLogs'>;
@@ -72,7 +72,7 @@ function attackSummary(log: AuditLog) {
 export default function AuditLogsScreen({ route }: Props) {
   const theme = useTheme();
   const dispatch = useAppDispatch();
-  const { auditLogs, isLoading, error } = useAppSelector((state) => state.admin);
+  const { auditLogs, auditLogsLoadingMore, isLoading, error, pagination } = useAppSelector((state) => state.admin);
   const [selectedAction, setSelectedAction] = useState(route.params?.initialAction || 'All');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -115,6 +115,18 @@ export default function AuditLogsScreen({ route }: Props) {
       limit: 50,
     }));
   }, [dispatch, endDate, selectedAction, startDate]);
+
+  const loadMoreLogs = useCallback(() => {
+    const auditPagination = pagination.auditLogs;
+    if (isLoading || auditLogsLoadingMore || auditPagination.page >= auditPagination.totalPages) return;
+    dispatch(fetchMoreAuditLogs({
+      action: selectedAction === 'All' ? undefined : selectedAction,
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
+      page: auditPagination.page + 1,
+      limit: auditPagination.limit || 50,
+    }));
+  }, [auditLogsLoadingMore, dispatch, endDate, isLoading, pagination.auditLogs, selectedAction, startDate]);
 
   useEffect(() => {
     loadLogs();
@@ -175,6 +187,9 @@ export default function AuditLogsScreen({ route }: Props) {
           contentContainerStyle={styles.list}
           refreshing={isLoading}
           onRefresh={loadLogs}
+          onEndReached={loadMoreLogs}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={auditLogsLoadingMore ? <ActivityIndicator color={theme.colors.highlight} /> : null}
           ListEmptyComponent={(
             <View style={styles.empty}>
               <Feather name="file-text" size={42} color={theme.colors.text.light} />

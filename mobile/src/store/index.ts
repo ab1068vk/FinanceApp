@@ -3,7 +3,7 @@ import authReducer, { authActions, User } from './slices/authSlice';
 import accountsReducer, { accountsActions, Account } from './slices/accountsSlice';
 import transactionsReducer, { transactionsActions, Transaction, Pagination } from './slices/transactionsSlice';
 import adminReducer, { adminActions } from './slices/adminSlice';
-import budgetsReducer, { budgetsActions, Budget, fetchBudgets } from './slices/budgetsSlice';
+import budgetsReducer, { budgetsActions, Budget, createBudget, fetchBudgets } from './slices/budgetsSlice';
 
 const uiSlice = createSlice({
   name: 'ui',
@@ -59,7 +59,7 @@ export { accountsActions };
 export type { Account };
 export { transactionsActions };
 export type { Transaction, Pagination };
-export { budgetsActions, fetchBudgets };
+export { budgetsActions, createBudget, fetchBudgets };
 export type { Budget };
 export const uiActions = uiSlice.actions;
 export { adminActions };

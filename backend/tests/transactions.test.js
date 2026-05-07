@@ -151,6 +151,53 @@ describe('Transactions API', () => {
     expect(Number(account.body.current_balance)).toBeCloseTo(-12);
   });
 
+  test('validates transaction amount decimal and positivity rules', async () => {
+    const basePayload = {
+      account_id: account.id,
+      category_id: category.id,
+      type: 'expense',
+      description: 'Amount validation',
+      date: new Date().toISOString(),
+    };
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: 10.999 })
+      .expect(400);
+
+    const accepted = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: 10.99 })
+      .expect(201);
+    expect(Number(accepted.body.amount)).toBeCloseTo(10.99);
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: -5 })
+      .expect(400);
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: 0 })
+      .expect(400);
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: 'abc' })
+      .expect(400);
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .send({ ...basePayload, amount: '' })
+      .expect(400);
+  });
+
   test('get transactions returns paginated list', async () => {
     const response = await request(app)
       .get('/api/transactions?page=1&limit=20')
@@ -160,6 +207,28 @@ describe('Transactions API', () => {
     expect(Array.isArray(response.body.data)).toBe(true);
     expect(response.body.pagination).toEqual(expect.objectContaining({ page: 1, limit: 20 }));
     expect(response.body.data.some((item) => item.id === transaction.id)).toBe(true);
+  });
+
+  test('get transactions supports page_size pagination metadata and rejects invalid pages', async () => {
+    const response = await request(app)
+      .get('/api/transactions?page=1&page_size=1')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .expect(200);
+
+    expect(Array.isArray(response.body.data)).toBe(true);
+    expect(response.body.data).toHaveLength(1);
+    expect(response.body.pagination).toEqual(expect.objectContaining({
+      total_count: expect.any(Number),
+      page: 1,
+      page_size: 1,
+      total_pages: expect.any(Number),
+    }));
+    expect(response.body.pagination.total_pages).toBe(Math.ceil(response.body.pagination.total_count / 1));
+
+    await request(app)
+      .get('/api/transactions?page=0')
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .expect(400);
   });
 
   test('search matches transaction notes and tags', async () => {

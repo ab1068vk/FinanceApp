@@ -54,54 +54,6 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
   );
 }
 
-function replaceLiteral(value, target, replacement) {
-  if (!value || !target) return value;
-  return String(value).split(target).join(replacement);
-}
-
-function redactDeletedUserAuditValue(value, user) {
-  let redacted = value;
-  redacted = replaceLiteral(redacted, user.email, '[DELETED_USER_EMAIL]');
-  redacted = replaceLiteral(redacted, user.full_name, '[DELETED_USER_NAME]');
-  return redacted;
-}
-
-function redactDeletedUserAuditHistory(user) {
-  const rows = db.prepare(`
-    SELECT id, user_id, old_value, new_value
-    FROM audit_logs
-    WHERE user_id = ?
-      OR entity_id = ?
-      OR old_value LIKE ?
-      OR new_value LIKE ?
-      OR old_value LIKE ?
-      OR new_value LIKE ?
-  `).all(
-    user.id,
-    user.id,
-    `%${user.email}%`,
-    `%${user.email}%`,
-    `%${user.full_name}%`,
-    `%${user.full_name}%`
-  );
-  const update = db.prepare(`
-    UPDATE audit_logs
-    SET user_id = CASE WHEN user_id = @deleted_user_id THEN NULL ELSE user_id END,
-        old_value = @old_value,
-        new_value = @new_value
-    WHERE id = @id
-  `);
-
-  for (const row of rows) {
-    update.run({
-      id: row.id,
-      deleted_user_id: user.id,
-      old_value: redactDeletedUserAuditValue(row.old_value, user),
-      new_value: redactDeletedUserAuditValue(row.new_value, user),
-    });
-  }
-}
-
 function mb(bytes) {
   return Number((bytes / 1024 / 1024).toFixed(2));
 }
@@ -134,7 +86,7 @@ function getDbSizeMb() {
 
 function pagination(req, defaultLimit = 50) {
   const page = Math.max(Number(req.query.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(req.query.limit) || defaultLimit, 1), 200);
+  const limit = Math.min(Math.max(Number(req.query.limit || req.query.page_size) || defaultLimit, 1), 200);
   return { page, limit, offset: (page - 1) * limit };
 }
 
@@ -517,6 +469,32 @@ function getUser(req, res, next) {
   }
 }
 
+function getUserSessions(req, res, next) {
+  try {
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { page, limit, offset } = pagination(req);
+    const params = [req.params.id, nowIso()];
+    const total = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM refresh_tokens
+      WHERE user_id = ? AND revoked = 0 AND expires_at > ?
+    `).get(...params).count;
+    const sessions = db.prepare(`
+      SELECT id, user_id, family_id, created_at, last_used_at, expires_at, user_agent
+      FROM refresh_tokens
+      WHERE user_id = ? AND revoked = 0 AND expires_at > ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    return res.json({ data: sessions, pagination: paginationMeta(page, limit, total) });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 function updateUserStatus(req, res, next) {
   try {
     if (req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot change your own status' });
@@ -562,6 +540,16 @@ function getDeletedUsers(req, res, next) {
       where.push('(LOWER(email) LIKE ? OR LOWER(full_name) LIKE ? OR LOWER(original_user_id) LIKE ?)');
       const search = `%${req.query.search.toLowerCase()}%`;
       params.push(search, search, search);
+    }
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) {
+      where.push('deleted_at >= ?');
+      params.push(rangeStartIso(startDate));
+    }
+    if (endDate) {
+      where.push('deleted_at <= ?');
+      params.push(rangeEndIso(endDate));
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = db.prepare(`SELECT COUNT(*) AS count FROM deleted_users ${whereSql}`).get(...params).count;
@@ -724,13 +712,15 @@ function getAuditLogs(req, res, next) {
       where.push('al.action = ?');
       params.push(req.query.action);
     }
-    if (req.query.start_date) {
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) {
       where.push('al.created_at >= ?');
-      params.push(rangeStartIso(req.query.start_date));
+      params.push(rangeStartIso(startDate));
     }
-    if (req.query.end_date) {
+    if (endDate) {
       where.push('al.created_at <= ?');
-      params.push(rangeEndIso(req.query.end_date));
+      params.push(rangeEndIso(endDate));
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -765,13 +755,15 @@ function getUserTransactions(req, res, next) {
         params.push(req.query[key]);
       }
     }
-    if (req.query.start_date) {
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) {
       where.push('t.date >= ?');
-      params.push(rangeStartIso(req.query.start_date));
+      params.push(rangeStartIso(startDate));
     }
-    if (req.query.end_date) {
+    if (endDate) {
       where.push('t.date <= ?');
-      params.push(rangeEndIso(req.query.end_date));
+      params.push(rangeEndIso(endDate));
     }
     if (req.query.min_amount) {
       where.push('t.amount >= ?');
@@ -1019,9 +1011,13 @@ function getAllTransactions(req, res, next) {
         params.push(value);
       }
     }
-    if (req.query.include_deleted !== 'true') where.push('t.admin_deleted_at IS NULL');
-    if (req.query.start_date) { where.push('t.date >= ?'); params.push(rangeStartIso(req.query.start_date)); }
-    if (req.query.end_date) { where.push('t.date <= ?'); params.push(rangeEndIso(req.query.end_date)); }
+    if (req.query.admin_deleted === 'true') where.push('t.admin_deleted_at IS NOT NULL');
+    else if (req.query.admin_deleted === 'false') where.push('t.admin_deleted_at IS NULL');
+    else if (req.query.include_deleted !== 'true') where.push('t.admin_deleted_at IS NULL');
+    const startDate = req.query.start_date || req.query.date_from;
+    const endDate = req.query.end_date || req.query.date_to;
+    if (startDate) { where.push('t.date >= ?'); params.push(rangeStartIso(startDate)); }
+    if (endDate) { where.push('t.date <= ?'); params.push(rangeEndIso(endDate)); }
     if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(amountToCents(req.query.min_amount)); }
     if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(amountToCents(req.query.max_amount)); }
     if (req.query.search) {
@@ -1823,6 +1819,7 @@ module.exports = {
   getDashboardStats,
   getUsers,
   getUser,
+  getUserSessions,
   getDeletedUsers,
   getDeletedUser,
   updateUserStatus,

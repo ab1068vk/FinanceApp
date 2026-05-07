@@ -130,6 +130,10 @@ export default function TransactionsScreen({ navigation }: Props) {
   }, [transactions]);
 
   const hasMore = pagination.page < pagination.totalPages;
+  const loadMoreTransactions = useCallback(() => {
+    if (!hasMore || isLoadingMore) return;
+    dispatch(fetchMoreTransactions());
+  }, [dispatch, hasMore, isLoadingMore]);
   const selectionMode = selectedTransactionIds.length > 0;
   const selectedTransactionSet = useMemo(() => new Set(selectedTransactionIds), [selectedTransactionIds]);
 
@@ -280,6 +284,8 @@ export default function TransactionsScreen({ navigation }: Props) {
         contentContainerStyle={styles.listContent}
         refreshing={isLoading}
         onRefresh={() => loadTransactions(filters)}
+        onEndReached={loadMoreTransactions}
+        onEndReachedThreshold={0.3}
         renderItem={({ item }) => {
           if (item.kind === 'header') return <Text style={styles.sectionHeader}>{item.title}</Text>;
           const selected = selectedTransactionSet.has(item.transaction.id);
@@ -294,11 +300,7 @@ export default function TransactionsScreen({ navigation }: Props) {
           );
         }}
         ListEmptyComponent={!isLoading ? <EmptyTransactions onPress={() => navigation.navigate('AddTransaction')} /> : null}
-        ListFooterComponent={hasMore ? (
-          <TouchableOpacity style={styles.loadMoreButton} onPress={() => dispatch(fetchMoreTransactions())} disabled={isLoadingMore}>
-            {isLoadingMore ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.loadMoreText}>Load More</Text>}
-          </TouchableOpacity>
-        ) : <View style={{ height: 90 }} />}
+        ListFooterComponent={isLoadingMore ? <ActivityIndicator color="#E94560" style={styles.footerLoader} /> : <View style={{ height: 90 }} />}
       />
 
       <TouchableOpacity style={[styles.fab, theme.shadows.large]} onPress={() => navigation.navigate('AddTransaction')}>
@@ -434,8 +436,7 @@ const styles = StyleSheet.create({
   bulkClear: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F5F5F5', alignItems: 'center', justifyContent: 'center' },
   listContent: { paddingHorizontal: 20, paddingBottom: 110 },
   sectionHeader: { color: '#6C757D', fontSize: 13, fontWeight: '900', marginTop: 18, marginBottom: 8, textTransform: 'uppercase' },
-  loadMoreButton: { height: 48, borderRadius: 12, backgroundColor: '#E94560', alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  loadMoreText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  footerLoader: { marginVertical: 18 },
   fab: { position: 'absolute', right: 24, bottom: 28, width: 62, height: 62, borderRadius: 31, backgroundColor: '#E94560', alignItems: 'center', justifyContent: 'center', shadowColor: '#000000' },
   modal: { margin: 0, justifyContent: 'flex-end' },
   modalSheet: { maxHeight: '92%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 22 },

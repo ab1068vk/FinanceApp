@@ -83,6 +83,52 @@ describe('Budgets API', () => {
     }));
   });
 
+  test('validates budget amount decimal and positivity rules', async () => {
+    const basePayload = {
+      category_id: category.id,
+      period: 'monthly',
+      start_date: new Date('2027-01-01T00:00:00.000Z').toISOString(),
+      end_date: new Date('2027-01-31T23:59:59.999Z').toISOString(),
+    };
+
+    await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, amount: 10.999 })
+      .expect(400);
+
+    const accepted = await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, amount: 10.99 })
+      .expect(201);
+    expect(accepted.body.amount).toBe(10.99);
+
+    await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, start_date: new Date('2027-02-01T00:00:00.000Z').toISOString(), end_date: new Date('2027-02-28T23:59:59.999Z').toISOString(), amount: -5 })
+      .expect(400);
+
+    await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, start_date: new Date('2027-03-01T00:00:00.000Z').toISOString(), end_date: new Date('2027-03-31T23:59:59.999Z').toISOString(), amount: 0 })
+      .expect(400);
+
+    await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, start_date: new Date('2027-04-01T00:00:00.000Z').toISOString(), end_date: new Date('2027-04-30T23:59:59.999Z').toISOString(), amount: 'abc' })
+      .expect(400);
+
+    await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, start_date: new Date('2027-05-01T00:00:00.000Z').toISOString(), end_date: new Date('2027-05-31T23:59:59.999Z').toISOString(), amount: '' })
+      .expect(400);
+  });
+
   test('lists budget spending and remaining amounts', async () => {
     await request(app)
       .post('/api/transactions')

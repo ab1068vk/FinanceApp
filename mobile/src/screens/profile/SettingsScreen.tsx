@@ -18,6 +18,7 @@ import { AutoLockPreference, getAutoLockPreference, setAutoLockPreference } from
 import { useTheme } from '../../theme';
 import type { FeatherIconName } from '../../utils/icons';
 import { ListPayload, unwrapList } from '../../types/api';
+import { getQueue } from '../../utils/offlineQueue';
 
 type Props = StackScreenProps<ProfileStackParamList, 'Settings'>;
 type CategoryExport = { id: string; name: string; type: string; color?: string | null; icon?: string | null };
@@ -112,6 +113,7 @@ export default function SettingsScreen({ navigation }: Props) {
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingQueueCount, setPendingQueueCount] = useState(0);
 
   const loadProfileData = useCallback(async () => {
     setIsRefreshing(true);
@@ -129,6 +131,7 @@ export default function SettingsScreen({ navigation }: Props) {
       setSettings({ ...storedSettings, autoLock });
       setBiometricEnabled(biometricPreference);
       setSessions(sessionResponse.data);
+      setPendingQueueCount((await getQueue()).length);
     } catch {
       setLoadError('Unable to refresh profile settings.');
       showToast({ type: 'error', text1: 'Profile refresh failed' });
@@ -347,6 +350,7 @@ export default function SettingsScreen({ navigation }: Props) {
           </SettingsGroup>
 
           <SettingsGroup title="Data">
+            <SettingsRow icon="upload-cloud" label="Offline Queue" value={`${pendingQueueCount} pending`} onPress={() => navigation.navigate('OfflineQueue')} />
             <SettingsRow icon="tag" label="Categories" onPress={() => navigation.navigate('Categories')} />
             <SettingsRow icon="download" label="Export Data" value={exporting ? 'Exporting' : 'CSV'} onPress={exporting ? undefined : exportData} />
             <SettingsRow icon="trash" label="Clear Local Cache" onPress={clearCache} />

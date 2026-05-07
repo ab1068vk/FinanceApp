@@ -135,6 +135,8 @@ type AdminState = {
   usersLoading: boolean;
   deletedUsersLoading: boolean;
   currentUsersRequestId: string | null;
+  usersLoadingMore: boolean;
+  auditLogsLoadingMore: boolean;
   error: string | null;
 };
 
@@ -158,6 +160,8 @@ const initialState: AdminState = {
   usersLoading: false,
   deletedUsersLoading: false,
   currentUsersRequestId: null,
+  usersLoadingMore: false,
+  auditLogsLoadingMore: false,
   error: null,
 };
 
@@ -204,6 +208,15 @@ export const fetchUsers = createAsyncThunk<ListResponse<AdminUser>, UsersFilters
     return normalizeListResponse(response.data, 20);
   } catch (error) {
     return rejectWithValue(errorMessage(error, 'Unable to load users'));
+  }
+});
+
+export const fetchMoreUsers = createAsyncThunk<ListResponse<AdminUser>, UsersFilters, { rejectValue: string }>('admin/fetchMoreUsers', async (filters, { rejectWithValue }) => {
+  try {
+    const response = await api.get<Partial<ListResponse<AdminUser>>>('/api/admin/users', { params: cleanParams({ limit: 20, ...filters }) });
+    return normalizeListResponse(response.data, 20);
+  } catch (error) {
+    return rejectWithValue(errorMessage(error, 'Unable to load more users'));
   }
 });
 
@@ -267,6 +280,15 @@ export const fetchAuditLogs = createAsyncThunk<ListResponse<AuditLog>, AuditFilt
     return response.data;
   } catch (error) {
     return rejectWithValue(errorMessage(error, 'Unable to load audit logs'));
+  }
+});
+
+export const fetchMoreAuditLogs = createAsyncThunk<ListResponse<AuditLog>, AuditFilters, { rejectValue: string }>('admin/fetchMoreAuditLogs', async (filters, { rejectWithValue }) => {
+  try {
+    const response = await api.get<ListResponse<AuditLog>>('/api/admin/audit-logs', { params: cleanParams({ limit: 50, ...filters }) });
+    return response.data;
+  } catch (error) {
+    return rejectWithValue(errorMessage(error, 'Unable to load more audit logs'));
   }
 });
 
@@ -373,6 +395,18 @@ const adminSlice = createSlice({
         state.currentUsersRequestId = null;
         state.error = action.payload || 'Unable to load users';
       })
+      .addCase(fetchMoreUsers.pending, (state) => {
+        state.usersLoadingMore = true;
+      })
+      .addCase(fetchMoreUsers.fulfilled, (state, action) => {
+        state.users = [...state.users, ...action.payload.data];
+        state.pagination.users = action.payload.pagination;
+        state.usersLoadingMore = false;
+      })
+      .addCase(fetchMoreUsers.rejected, (state, action) => {
+        state.usersLoadingMore = false;
+        state.error = action.payload || 'Unable to load more users';
+      })
       .addCase(fetchDeletedUsers.pending, (state) => {
         state.deletedUsersLoading = true;
         state.error = null;
@@ -403,6 +437,13 @@ const adminSlice = createSlice({
       .addCase(fetchAuditLogs.pending, (state) => { state.isLoading = true; state.error = null; })
       .addCase(fetchAuditLogs.fulfilled, (state, action) => { state.auditLogs = action.payload.data; state.pagination.auditLogs = action.payload.pagination; state.isLoading = false; })
       .addCase(fetchAuditLogs.rejected, (state, action) => { state.isLoading = false; state.error = action.payload || 'Unable to load audit logs'; })
+      .addCase(fetchMoreAuditLogs.pending, (state) => { state.auditLogsLoadingMore = true; })
+      .addCase(fetchMoreAuditLogs.fulfilled, (state, action) => {
+        state.auditLogs = [...state.auditLogs, ...action.payload.data];
+        state.pagination.auditLogs = action.payload.pagination;
+        state.auditLogsLoadingMore = false;
+      })
+      .addCase(fetchMoreAuditLogs.rejected, (state, action) => { state.auditLogsLoadingMore = false; state.error = action.payload || 'Unable to load more audit logs'; })
       .addCase(fetchSystemHealth.fulfilled, (state, action) => { state.systemHealth = action.payload; })
       .addCase(fetchUserTransactions.fulfilled, (state, action) => {
         state.selectedUserTransactions = action.payload.data;

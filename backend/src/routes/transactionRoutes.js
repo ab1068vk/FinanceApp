@@ -20,7 +20,29 @@ const decimalMoney = (chain, field = 'amount') => chain
   .withMessage(`${field} must be a non-negative number`)
   .bail()
   .custom((value) => {
-    if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+      throw new Error(`${field} must have at most 2 decimal places`);
+    }
+    return true;
+  });
+const positiveMoney = (chain, field = 'amount') => chain
+  .notEmpty().withMessage(`${field} is required`)
+  .isFloat({ min: 0.01, max: MAX_TRANSACTION_AMOUNT })
+  .withMessage(`${field} must be a positive number`)
+  .bail()
+  .custom((value) => {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+      throw new Error(`${field} must have at most 2 decimal places`);
+    }
+    return true;
+  });
+const optionalPositiveMoney = (chain, field = 'amount') => chain
+  .optional()
+  .isFloat({ min: 0.01, max: MAX_TRANSACTION_AMOUNT })
+  .withMessage(`${field} must be a positive number`)
+  .bail()
+  .custom((value) => {
+    if (!/^\d+(\.\d{1,2})?$/.test(String(value).trim())) {
       throw new Error(`${field} must have at most 2 decimal places`);
     }
     return true;
@@ -31,11 +53,14 @@ const filters = [
   query('type').optional().isIn(types).withMessage(`type must be one of: ${types.join(', ')}`),
   query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
   query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
+  query('date_from').optional().custom(isIsoDate).withMessage('date_from must be a valid ISO date'),
+  query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
   decimalMoney(query('min_amount').optional(), 'min_amount'),
   decimalMoney(query('max_amount').optional(), 'max_amount'),
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
   query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: MAX_TRANSACTION_LIST_LIMIT }).withMessage(`limit must be between 1 and ${MAX_TRANSACTION_LIST_LIMIT}`),
+  query('page_size').optional().isInt({ min: 1, max: MAX_TRANSACTION_LIST_LIMIT }).withMessage(`page_size must be between 1 and ${MAX_TRANSACTION_LIST_LIMIT}`),
 ];
 const createRules = [
   body('account_id').optional({ nullable: true, checkFalsy: true }).isUUID().withMessage('account_id must be a valid UUID'),
@@ -48,7 +73,7 @@ const createRules = [
     return true;
   }),
   body('type').isIn(types).withMessage(`type must be one of: ${types.join(', ')}`),
-  decimalMoney(body('amount').notEmpty(), 'amount'),
+  positiveMoney(body('amount'), 'amount'),
   body('date').custom(isIsoDate).withMessage('date must be a valid ISO date'),
   body('description').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ max: 200 }).withMessage('description must be up to 200 characters'),
   body('note').optional({ nullable: true }).isString().trim().isLength({ max: 1000 }).withMessage('note must be up to 1000 characters'),
@@ -60,7 +85,7 @@ const createRules = [
 ];
 const updateRules = [
   idParam,
-  decimalMoney(body('amount').optional(), 'amount'),
+  optionalPositiveMoney(body('amount'), 'amount'),
   body('description').optional({ nullable: true }).isString().trim().isLength({ max: 200 }).withMessage('description must be up to 200 characters'),
   body('note').optional({ nullable: true }).isString().trim().isLength({ max: 1000 }).withMessage('note must be up to 1000 characters'),
   body('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),

@@ -59,6 +59,43 @@ describe('Accounts API', () => {
     }));
   });
 
+  test('validates account money fields as non-negative amounts with two decimals', async () => {
+    const basePayload = { name: 'Money Rules', type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card' };
+
+    await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, name: 'Three Decimal Balance', balance: 10.999 })
+      .expect(400);
+
+    const accepted = await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, name: 'Two Decimal Balance', balance: 10.99, overdraft_limit: 0 })
+      .expect(201);
+    expect(accepted.body.balance).toBe(10.99);
+    expect(accepted.body.overdraft_limit).toBe(0);
+
+    const zero = await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, name: 'Zero Balance', balance: 0 })
+      .expect(201);
+    expect(zero.body.balance).toBe(0);
+
+    await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, name: 'Negative Balance', balance: -5 })
+      .expect(400);
+
+    await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ ...basePayload, name: 'Invalid Balance', balance: 'abc' })
+      .expect(400);
+  });
+
   test('lists and retrieves only owned active accounts', async () => {
     const list = await request(app)
       .get('/api/accounts')

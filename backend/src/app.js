@@ -237,7 +237,7 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   const statusCode = err.statusCode || err.status || 500;
 
   logger.error(err.message || 'Unhandled application error', {

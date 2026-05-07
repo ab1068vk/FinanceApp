@@ -1,6 +1,8 @@
 ﻿import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import api from '../../services/api';
+import { showToast } from '../../components/common/Toast';
 import { ListPayload, unwrapList } from '../../types/api';
+import { enqueue } from '../../utils/offlineQueue';
 
 export type AccountType = 'checking' | 'savings' | 'credit' | 'investment' | 'cash';
 
@@ -60,6 +62,17 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function isNetworkError(error: unknown) {
+  if (typeof error === 'object' && error !== null && 'response' in error) {
+    return !(error as { response?: unknown }).response;
+  }
+  return error instanceof Error;
+}
+
+function tempId() {
+  return `offline-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export const fetchAccounts = createAsyncThunk<Account[], void, { rejectValue: string }>(
   'accounts/fetchAccounts',
   async (_, { rejectWithValue }) => {
@@ -79,6 +92,18 @@ export const createAccount = createAsyncThunk<Account, CreateAccountData, { reje
       const response = await api.post<Account>('/api/accounts', data);
       return response.data;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'POST', url: '/api/accounts', data, description: `Create account ${data.name}` });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return {
+          ...data,
+          id: tempId(),
+          balance: data.balance || 0,
+          current_balance: data.balance || 0,
+          is_active: 1,
+          created_at: new Date().toISOString(),
+        };
+      }
       return rejectWithValue(errorMessage(error, 'Unable to create account'));
     }
   }
@@ -91,6 +116,11 @@ export const updateAccount = createAsyncThunk<Account, { id: string; data: Updat
       const response = await api.put<Account>(`/api/accounts/${id}`, data);
       return response.data;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'PUT', url: `/api/accounts/${id}`, data, description: 'Update account' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return { id, ...(data as Partial<Account>) } as Account;
+      }
       return rejectWithValue(errorMessage(error, 'Unable to update account'));
     }
   }
@@ -103,6 +133,11 @@ export const deleteAccount = createAsyncThunk<string, { id: string; transactionA
       await api.delete(`/api/accounts/${id}`, { params: { transaction_action: transactionAction } });
       return id;
     } catch (error) {
+      if (isNetworkError(error)) {
+        await enqueue({ method: 'DELETE', url: `/api/accounts/${id}?transaction_action=${encodeURIComponent(transactionAction)}`, description: 'Delete account' });
+        showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
+        return id;
+      }
       return rejectWithValue(errorMessage(error, 'Unable to delete account'));
     }
   }
@@ -151,9 +186,9 @@ const accountsSlice = createSlice({
         state.selectedAccount = action.payload;
       })
       .addCase(updateAccount.fulfilled, (state, action) => {
-        state.accounts = state.accounts.map((account) => account.id === action.payload.id ? action.payload : account);
+        state.accounts = state.accounts.map((account) => account.id === action.payload.id ? { ...account, ...action.payload } : account);
         if (state.selectedAccount?.id === action.payload.id) {
-          state.selectedAccount = action.payload;
+          state.selectedAccount = { ...state.selectedAccount, ...action.payload };
         }
       })
       .addCase(deleteAccount.fulfilled, (state, action) => {

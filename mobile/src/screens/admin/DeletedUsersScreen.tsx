@@ -20,7 +20,7 @@ function niceDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? 'Unknown' : format(date, 'MMM d, yyyy h:mm a');
 }
 
-export default function DeletedUsersScreen({}: Props) {
+export default function DeletedUsersScreen(_props: Props) {
   const dispatch = useAppDispatch();
   const { deletedUsers, selectedDeletedUser, deletedUsersLoading, isLoading, error } = useAppSelector((state) => state.admin);
   const [search, setSearch] = useState('');
