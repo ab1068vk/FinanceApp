@@ -2,6 +2,7 @@
 const { db } = require('../../database/db');
 const { JWT_ALGORITHM, hashToken, sanitizeUser } = require('../utils/security');
 const { isAccessTokenBlocked } = require('../utils/accessTokenBlocklist');
+const { recordSecurityEvent } = require('./securityMonitor');
 
 function nowIso() {
   return new Date().toISOString();
@@ -19,6 +20,7 @@ function authenticateApiToken(token, req, res, next) {
   `).get(hashToken(token));
 
   if (!row) {
+    recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'invalid_admin_api_token' });
     return res.status(401).json({ error: 'Invalid token' });
   }
 
@@ -41,6 +43,7 @@ function requireAuth(req, res, next) {
     const [scheme, token] = authHeader.split(' ');
 
     if (scheme !== 'Bearer' || !token) {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_MISSING', { reason: 'missing_bearer_token' });
       return res.status(401).json({ error: 'Authentication required' });
     }
 
@@ -56,20 +59,24 @@ function requireAuth(req, res, next) {
     const userId = decoded.sub;
 
     if (!userId) {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'missing_subject' });
       return res.status(401).json({ error: 'Invalid token' });
     }
 
     const user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(userId);
 
     if (!user) {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'unknown_or_inactive_user', subject: userId });
       return res.status(401).json({ error: 'Invalid token' });
     }
 
     if (isAccessTokenBlocked(decoded.jti)) {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'blocked_access_token', subject: userId });
       return res.status(401).json({ error: 'Invalid token' });
     }
 
     if (!decoded.security_stamp || decoded.security_stamp !== user.security_stamp) {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'security_stamp_mismatch', subject: userId });
       return res.status(401).json({ error: 'Invalid token' });
     }
 
@@ -84,10 +91,12 @@ function requireAuth(req, res, next) {
     return next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'token_expired' });
       return res.status(401).json({ error: 'Token expired' });
     }
 
     if (error.name === 'JsonWebTokenError') {
+      recordSecurityEvent(req, [], 'SECURITY_AUTH_FAILURE', { reason: 'invalid_jwt', message: error.message });
       return res.status(401).json({ error: 'Invalid token' });
     }
 

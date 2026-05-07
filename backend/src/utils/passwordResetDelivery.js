@@ -136,6 +136,21 @@ function tokenEmailContent({ kind, actionUrl, fallbackUrl, expiresAt }) {
   };
 }
 
+function temporaryPasswordEmailContent({ temporaryPassword }) {
+  const escapedPassword = escapeHtml(temporaryPassword);
+  return {
+    subject: 'Your temporary FinanceApp password',
+    text: `An administrator reset your FinanceApp password.\n\nTemporary password: ${temporaryPassword}\n\nUse this password to sign in. You will be required to choose a new password immediately after login. If you did not expect this reset, contact support.`,
+    html: `
+      <p>An administrator reset your FinanceApp password.</p>
+      <p>Temporary password:</p>
+      <p><strong>${escapedPassword}</strong></p>
+      <p>Use this password to sign in. You will be required to choose a new password immediately after login.</p>
+      <p>If you did not expect this reset, contact support.</p>
+    `,
+  };
+}
+
 async function deliverViaWebhook({ webhookUrl, email, token, actionUrl, fallbackUrl, expiresAt, tokenFieldName, urlFieldName, label }) {
   assertSecureDeliveryUrl(webhookUrl, label);
   const response = await fetch(webhookUrl, {
@@ -157,6 +172,25 @@ async function deliverViaSmtp({ email, kind, actionUrl, fallbackUrl, expiresAt }
 
   const transporter = createSmtpTransport();
   const content = tokenEmailContent({ kind, actionUrl, fallbackUrl, expiresAt });
+  await transporter.sendMail({
+    from,
+    to: email,
+    subject: content.subject,
+    text: content.text,
+    html: content.html,
+    disableFileAccess: true,
+    disableUrlAccess: true,
+  });
+}
+
+async function deliverTemporaryPasswordViaSmtp({ email, temporaryPassword }) {
+  const from = fromAddress();
+  if (!from) {
+    throw new Error('EMAIL_FROM or SMTP_USER is required for SMTP email delivery');
+  }
+
+  const transporter = createSmtpTransport();
+  const content = temporaryPasswordEmailContent({ temporaryPassword });
   await transporter.sendMail({
     from,
     to: email,
@@ -262,10 +296,33 @@ async function deliverEmailVerificationToken({ email, token, expiresAt }) {
   });
 }
 
+async function deliverAdminTemporaryPassword({ email, temporaryPassword }) {
+  if (process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
+    logger.warn('Admin temporary password delivery skipped in test mode', {
+      email: maskEmail(email),
+      delivery: 'test-manual-handoff',
+    });
+    return { channel: 'manual', sent: false, reason: 'test_mode' };
+  }
+
+  if (smtpConfigured()) {
+    await deliverTemporaryPasswordViaSmtp({ email, temporaryPassword });
+    logger.info('Admin temporary password delivered via SMTP', { email: maskEmail(email) });
+    return { channel: 'email', sent: true };
+  }
+
+  logger.warn('Admin temporary password requires manual delivery because SMTP is not configured', {
+    email: maskEmail(email),
+    delivery: 'manual-handoff',
+  });
+  return { channel: 'manual', sent: false, reason: 'smtp_not_configured' };
+}
+
 module.exports = {
   maskEmail,
   resetUrlFor,
   verificationUrlFor,
   deliverPasswordResetToken,
   deliverEmailVerificationToken,
+  deliverAdminTemporaryPassword,
 };

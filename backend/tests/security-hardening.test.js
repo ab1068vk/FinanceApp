@@ -101,12 +101,51 @@ describe('Security hardening regressions', () => {
     }
   });
 
+  test('security audit logs include attack source details for blocked and invalid requests', async () => {
+    const admin = await createAdminSession();
+
+    await request(app)
+      .post('/api/auth/login?probe=../../etc/passwd')
+      .set('User-Agent', 'security-test-agent')
+      .set('Referer', 'https://evil.example/login')
+      .send({ email: 'source@example.com', password: 'StrongPass1!' })
+      .expect(429);
+
+    const attackLogs = await request(app)
+      .get('/api/admin/audit-logs?action=SECURITY_ATTACK_ATTEMPT&limit=5')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+
+    const attackPayload = JSON.parse(attackLogs.body.data[0].new_value);
+    expect(attackPayload.source).toEqual(expect.objectContaining({
+      ip: expect.any(String),
+      referer: 'https://evil.example/login',
+      user_agent: 'security-test-agent',
+    }));
+    expect(attackPayload.findings.some((finding) => finding.attack_type === 'path_traversal')).toBe(true);
+    expect(attackLogs.body.data[0].summary).toContain('from');
+
+    await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', 'Bearer not-a-valid-jwt')
+      .expect(401);
+
+    const authLogs = await request(app)
+      .get('/api/admin/audit-logs?action=SECURITY_AUTH_FAILURE&limit=5')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(authLogs.body.data.some((log) => {
+      const payload = JSON.parse(log.new_value);
+      return payload.reason === 'invalid_jwt' && payload.source?.ip;
+    })).toBe(true);
+  });
+
   test('admin API tokens work before revocation and fail after revocation', async () => {
     const admin = await createAdminSession();
     const created = await request(app)
       .post('/api/admin/api-tokens')
       .set('Authorization', `Bearer ${admin.accessToken}`)
-      .send({ name: 'Automation token', scopes: ['admin:read'] })
+      .send({ name: 'Automation token', scopes: ['read:users'] })
       .expect(201);
 
     await request(app)

@@ -13,6 +13,7 @@ const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
 const { amountToCents, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const { deliverAdminTemporaryPassword } = require('../utils/passwordResetDelivery');
 
 const backendRoot = path.join(__dirname, '..', '..');
 const logDir = path.join(backendRoot, 'logs');
@@ -27,6 +28,7 @@ const AVAILABLE_TOKEN_SCOPES = [
   'db:backup',
   'db:maintenance',
 ];
+const AVAILABLE_TOKEN_SCOPE_SET = new Set(AVAILABLE_TOKEN_SCOPES);
 
 function nowIso() {
   return new Date().toISOString();
@@ -34,6 +36,34 @@ function nowIso() {
 
 function newSecurityStamp() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+function generateTemporaryPassword() {
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const numbers = '23456789';
+  const specials = '!@#$%^&*';
+  const alphabet = `${letters}${numbers}${specials}`;
+  const required = [
+    letters[crypto.randomInt(0, 24)],
+    letters[crypto.randomInt(24, letters.length)],
+    numbers[crypto.randomInt(0, numbers.length)],
+    specials[crypto.randomInt(0, specials.length)],
+  ];
+  while (required.length < 16) {
+    required.push(alphabet[crypto.randomInt(0, alphabet.length)]);
+  }
+  return required
+    .map((value) => ({ value, sort: crypto.randomInt(0, 1000000) }))
+    .sort((left, right) => left.sort - right.sort)
+    .map((item) => item.value)
+    .join('');
+}
+
+function normalizeTokenScopes(scopes) {
+  const requestedScopes = Array.isArray(scopes) && scopes.length > 0 ? scopes : ['read:users'];
+  const normalized = [...new Set(requestedScopes.map((scope) => String(scope || '').trim()).filter(Boolean))];
+  const invalid = normalized.filter((scope) => !AVAILABLE_TOKEN_SCOPE_SET.has(scope));
+  return { scopes: normalized, invalid };
 }
 
 function audit(req, action, entityType, entityId, oldValue = null, newValue = null) {
@@ -52,6 +82,90 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
     req.get('user-agent') || null,
     nowIso()
   );
+}
+
+function parseAuditJson(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function wordsFromAction(action) {
+  return String(action || 'AUDIT_EVENT')
+    .replace(/^ADMIN_/, '')
+    .replace(/^USER_/, '')
+    .replace(/^SECURITY_/, 'SECURITY ')
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function auditSummary(log) {
+  const oldValue = parseAuditJson(log.old_value);
+  const newValue = parseAuditJson(log.new_value);
+  const actor = log.user_email || log.user_full_name || 'An administrator';
+  const target = newValue?.target_user_email || oldValue?.email || newValue?.email || log.entity_id || 'the selected record';
+
+  switch (log.action) {
+    case 'ADMIN_UPDATED_USER_STATUS':
+      return `${actor} ${newValue?.is_active ? 'activated' : 'deactivated'} ${target}.`;
+    case 'ADMIN_UPDATED_USER_ROLE':
+      return `${actor} changed ${target} to ${newValue?.role || 'a new role'}.`;
+    case 'ADMIN_RESET_USER_PASSWORD':
+      return `${actor} reset the password for ${target}; the user must change it at next login.`;
+    case 'ADMIN_HARD_DELETED_USER':
+      return `${actor} permanently deleted a user and archived the deletion record.`;
+    case 'ADMIN_SOFT_DELETED_TRANSACTION':
+      return `${actor} deleted ${newValue?.related_count || 1} transaction${Number(newValue?.related_count || 1) === 1 ? '' : 's'}${newValue?.reason ? ` because: ${newValue.reason}` : '.'}`;
+    case 'ADMIN_DELETED_USER_ACCOUNT':
+      return `${actor} deleted account "${oldValue?.name || log.entity_id}" for ${target}${newValue?.reason ? ` because: ${newValue.reason}` : '.'}`;
+    case 'ADMIN_UPDATED_USER_ACCOUNT_STATUS':
+      return `${actor} ${newValue?.is_active ? 'reactivated' : 'closed'} account "${oldValue?.name || log.entity_id}"${newValue?.reason ? ` because: ${newValue.reason}` : '.'}`;
+    case 'ADMIN_CREATED_BALANCE_CORRECTION':
+      return `${actor} created a balance correction${newValue?.reason ? ` because: ${newValue.reason}` : ''}.`;
+    case 'ADMIN_BULK_USER_OPERATION':
+      return `${actor} ran a bulk user operation: ${newValue?.action || 'unknown action'} for ${newValue?.count || 0} user${Number(newValue?.count || 0) === 1 ? '' : 's'}.`;
+    case 'ADMIN_REVOKED_USER_SESSIONS':
+      return `${actor} revoked ${newValue?.revoked || 0} active session${Number(newValue?.revoked || 0) === 1 ? '' : 's'} for ${log.entity_id || 'a user'}.`;
+    case 'ADMIN_REJECTED_API_TOKEN_SCOPE':
+      return `${actor} tried to create API token "${newValue?.name || 'unnamed token'}" with unsupported scope${Array.isArray(newValue?.invalid_scopes) && newValue.invalid_scopes.length === 1 ? '' : 's'}: ${(newValue?.invalid_scopes || []).join(', ') || 'unknown'}.`;
+    case 'SECURITY_ATTACK_ATTEMPT': {
+      const first = Array.isArray(newValue?.findings) ? newValue.findings[0] : null;
+      const sourceIp = newValue?.source?.ip || log.ip_address || 'unknown source';
+      return first ? `Security monitor detected ${first.attack_type || 'suspicious input'} from ${sourceIp} in ${first.input_path || 'a request field'}.` : `Security monitor detected a suspicious request from ${sourceIp}.`;
+    }
+    case 'SECURITY_BLOCKED_REQUEST':
+      return `Blocked a request from ${newValue?.source?.ip || log.ip_address || 'unknown source'} because ${newValue?.reason || 'the source is blocked'}.`;
+    case 'SECURITY_CSRF_FAILURE':
+      return `Rejected a state-changing request from ${newValue?.source?.ip || log.ip_address || 'unknown source'} because the CSRF token was invalid.`;
+    case 'SECURITY_CORS_REJECTED':
+      return `Rejected a cross-origin request from ${newValue?.origin || 'unknown origin'}.`;
+    case 'SECURITY_MALFORMED_REQUEST':
+      return `Rejected malformed request JSON from ${newValue?.source?.ip || log.ip_address || 'unknown source'}.`;
+    case 'SECURITY_AUTH_FAILURE':
+      return `An authentication attempt from ${newValue?.source?.ip || log.ip_address || 'unknown source'} failed${newValue?.reason ? ` because: ${newValue.reason}` : '.'}`;
+    case 'SECURITY_AUTH_MISSING':
+      return `A protected endpoint was requested from ${newValue?.source?.ip || log.ip_address || 'unknown source'} without a bearer token.`;
+    case 'USER_LOGIN':
+      return `${target} signed in.`;
+    case 'USER_LOGOUT':
+      return `${target} signed out.`;
+    case 'PASSWORD_CHANGED':
+      return `${target} changed their password.`;
+    default:
+      return `${actor} performed ${wordsFromAction(log.action)} on ${log.entity_type || 'the system'}${log.entity_id ? ` ${log.entity_id}` : ''}.`;
+  }
+}
+
+function enrichAuditLog(log) {
+  return {
+    ...log,
+    action_label: wordsFromAction(log.action),
+    summary: auditSummary(log),
+  };
 }
 
 function createUserNotification(userId, type, title, body, data = {}) {
@@ -478,7 +592,7 @@ function getUser(req, res, next) {
       LIMIT 10
     `).all(req.params.id, req.params.id);
 
-    return res.json(serializeMoney({ user: sanitizeUser(user), summary, recent_audit_logs: auditLogs }));
+    return res.json(serializeMoney({ user: sanitizeUser(user), summary, recent_audit_logs: auditLogs.map(enrichAuditLog) }));
   } catch (error) {
     return next(error);
   }
@@ -624,7 +738,8 @@ async function resetUserPassword(req, res, next) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const passwordHash = await hashPassword(req.body.temporary_password);
+    const temporaryPassword = String(req.body.temporary_password || '').trim() || generateTemporaryPassword();
+    const passwordHash = await hashPassword(temporaryPassword);
     const updatedAt = nowIso();
     db.transaction(() => {
       db.prepare(`
@@ -634,10 +749,28 @@ async function resetUserPassword(req, res, next) {
         WHERE id = ?
       `).run(passwordHash, newSecurityStamp(), updatedAt, req.params.id);
       db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(req.params.id);
-      audit(req, 'ADMIN_RESET_USER_PASSWORD', 'user', req.params.id, { id: user.id, email: user.email }, { must_change_password: true });
+      audit(req, 'ADMIN_RESET_USER_PASSWORD', 'user', req.params.id, { id: user.id, email: user.email }, {
+        must_change_password: true,
+        temporary_password_returned: true,
+      });
+      createUserNotification(
+        req.params.id,
+        'admin-password-reset',
+        'Password reset by admin',
+        'An administrator reset your password. Use the temporary password they provide, then choose a new password at login.',
+        { reset_at: updatedAt, must_change_password: true }
+      );
     })();
 
-    return res.json({ success: true, must_change_password: true });
+    let delivery = { channel: 'manual', sent: false };
+    try {
+      delivery = await deliverAdminTemporaryPassword({ email: user.email, temporaryPassword });
+    } catch (deliveryError) {
+      logger.warn('Admin temporary password delivery failed', { userId: user.id, error: deliveryError.message });
+      delivery = { channel: 'email', sent: false, error: 'delivery_failed' };
+    }
+
+    return res.json({ success: true, must_change_password: true, temporary_password: temporaryPassword, delivery });
   } catch (error) {
     return next(error);
   }
@@ -749,7 +882,7 @@ function getAuditLogs(req, res, next) {
       LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
 
-    return res.json({ data: logs, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: logs.map(enrichAuditLog), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1679,12 +1812,24 @@ function listApiTokens(req, res, next) {
 
 function createApiToken(req, res, next) {
   try {
+    const { scopes, invalid } = normalizeTokenScopes(req.body.scopes);
+    if (invalid.length > 0) {
+      audit(req, 'ADMIN_REJECTED_API_TOKEN_SCOPE', 'api_token', null, null, {
+        name: req.body.name,
+        requested_scopes: scopes,
+        invalid_scopes: invalid,
+      });
+      return res.status(400).json({
+        error: `Invalid API token scope${invalid.length === 1 ? '' : 's'}: ${invalid.join(', ')}`,
+        allowed_scopes: AVAILABLE_TOKEN_SCOPES,
+      });
+    }
     const rawToken = `fa_${crypto.randomBytes(32).toString('hex')}`;
     const row = {
       id: crypto.randomUUID(),
       name: req.body.name,
       token_hash: hashToken(rawToken),
-      scopes: JSON.stringify(req.body.scopes || ['read:users']),
+      scopes: JSON.stringify(scopes),
       is_active: 1,
       created_at: nowIso(),
       created_by: req.user.id,

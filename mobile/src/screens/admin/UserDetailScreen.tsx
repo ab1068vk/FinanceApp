@@ -101,7 +101,9 @@ export default function UserDetailScreen({ route, navigation }: Props) {
   } = useAppSelector((state) => state.admin);
   const currentUser = useAppSelector((state) => state.auth.user);
   const [pendingAction, setPendingAction] = useState<ActionType>(null);
-  const [tempPassword, setTempPassword] = useState('TempPass1!');
+  const [tempPassword, setTempPassword] = useState('');
+  const [resetPasswordResult, setResetPasswordResult] = useState<string | null>(null);
+  const [resetDeliveryMessage, setResetDeliveryMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [transactionStartDate, setTransactionStartDate] = useState('');
   const [transactionEndDate, setTransactionEndDate] = useState('');
@@ -205,7 +207,11 @@ export default function UserDetailScreen({ route, navigation }: Props) {
       };
     }
     if (pendingAction === 'password') {
-      return { title: 'Reset Password', body: 'Set a temporary password. The user will be required to change it on next login.', confirm: 'Reset Password' };
+      return {
+        title: 'Reset Password',
+        body: 'Leave the field blank to generate a temporary password. The user must use it once, then choose a new password at login.',
+        confirm: resetPasswordResult ? 'Done' : 'Reset Password',
+      };
     }
     if (pendingAction === 'delete') {
       return {
@@ -215,7 +221,7 @@ export default function UserDetailScreen({ route, navigation }: Props) {
       };
     }
     return { title: 'User Transactions', body: '', confirm: '' };
-  }, [isActive, pendingAction, user]);
+  }, [isActive, pendingAction, resetPasswordResult, user]);
 
   async function openTransactions() {
     setPendingAction('transactions');
@@ -338,8 +344,24 @@ export default function UserDetailScreen({ route, navigation }: Props) {
         showToast({ type: 'success', text1: 'Role updated' });
       }
       if (pendingAction === 'password') {
-        await dispatch(resetUserPassword({ id: user.id, tempPassword })).unwrap();
-        showToast({ type: 'success', text1: 'Temporary password set' });
+        if (resetPasswordResult) {
+          setPendingAction(null);
+          setResetPasswordResult(null);
+          setResetDeliveryMessage('');
+          setTempPassword('');
+          return;
+        }
+        const response = await dispatch(resetUserPassword({ id: user.id, tempPassword })).unwrap();
+        setResetPasswordResult(response.temporary_password);
+        const delivered = response.delivery?.sent && response.delivery.channel === 'email';
+        setResetDeliveryMessage(delivered ? `Sent to ${user.email}.` : 'Email delivery is not configured. Share this password with the user through your support channel.');
+        showToast({
+          type: 'success',
+          text1: delivered ? 'Temporary password emailed' : 'Temporary password generated',
+          text2: delivered ? `Sent to ${user.email}.` : 'Manual handoff required.',
+        });
+        load();
+        return;
       }
       if (pendingAction === 'delete') {
         await dispatch(deleteUserPermanently(user.id)).unwrap();
@@ -349,6 +371,8 @@ export default function UserDetailScreen({ route, navigation }: Props) {
         return;
       }
       setPendingAction(null);
+      setResetPasswordResult(null);
+      setResetDeliveryMessage('');
       load();
     } catch (error) {
       showToast({ type: 'error', text1: 'Admin action failed', text2: typeof error === 'string' ? error : 'Please try again.' });
@@ -515,6 +539,7 @@ export default function UserDetailScreen({ route, navigation }: Props) {
                   <View style={[styles.auditBadge, { backgroundColor: badgeColor }]}><Text style={styles.auditBadgeText}>{log.action}</Text></View>
                   <Text style={styles.subtle}>{formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}</Text>
                 </View>
+                <Text style={styles.metricName}>{log.summary || log.action_label || log.action.replace(/_/g, ' ')}</Text>
                 <Text style={styles.subtle}>{log.entity_type || 'System'} {log.entity_id ? `- ${log.entity_id.slice(0, 8)}` : ''}</Text>
               </View>
             );
@@ -522,7 +547,7 @@ export default function UserDetailScreen({ route, navigation }: Props) {
         </View>
       </ScrollView>
 
-      <Modal isVisible={pendingAction !== null && pendingAction !== 'transactions' && pendingAction !== 'accounts' && pendingAction !== 'deleteAccount'} onBackdropPress={() => setPendingAction(null)} style={styles.modal}>
+      <Modal isVisible={pendingAction !== null && pendingAction !== 'transactions' && pendingAction !== 'accounts' && pendingAction !== 'deleteAccount'} onBackdropPress={() => { setPendingAction(null); setResetPasswordResult(null); setResetDeliveryMessage(''); }} style={styles.modal}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalCard}
@@ -531,10 +556,18 @@ export default function UserDetailScreen({ route, navigation }: Props) {
           <Text style={styles.modalTitle}>{actionText.title}</Text>
           <Text style={styles.modalBody}>{actionText.body}</Text>
           {pendingAction === 'password' ? (
-            <TextInput style={styles.input} value={tempPassword} onChangeText={setTempPassword} secureTextEntry placeholder="Temporary password" placeholderTextColor={theme.colors.text.light} />
+            resetPasswordResult ? (
+              <View>
+                <Text style={styles.infoLabel}>Temporary password</Text>
+                <Text selectable style={styles.code}>{resetPasswordResult}</Text>
+                <Text style={styles.subtle}>{resetDeliveryMessage || 'This is only shown once. The user will be forced to change it after logging in.'}</Text>
+              </View>
+            ) : (
+              <TextInput style={styles.input} value={tempPassword} onChangeText={setTempPassword} placeholder="Optional custom temporary password" placeholderTextColor={theme.colors.text.light} />
+            )
           ) : null}
           <View style={styles.modalButtons}>
-            <Pressable style={styles.secondaryButton} onPress={() => setPendingAction(null)} disabled={isSubmitting}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
+            <Pressable style={styles.secondaryButton} onPress={() => { setPendingAction(null); setResetPasswordResult(null); setResetDeliveryMessage(''); }} disabled={isSubmitting}><Text style={styles.secondaryText}>{resetPasswordResult ? 'Close' : 'Cancel'}</Text></Pressable>
             <Pressable style={styles.primaryButton} onPress={confirmAction} disabled={isSubmitting}>
               {isSubmitting ? <ActivityIndicator color={theme.colors.text.inverse} /> : <Text style={styles.buttonText}>{actionText.confirm}</Text>}
             </Pressable>

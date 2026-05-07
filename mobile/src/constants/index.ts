@@ -14,6 +14,7 @@ export function getDefaultApiBaseUrl() {
 }
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || getDefaultApiBaseUrl();
+export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL?.trim() || '';
 export const ACCESS_TOKEN_KEY = 'financeapp.accessToken';
 export const REFRESH_TOKEN_KEY = 'financeapp.refreshToken';
 export const USER_KEY = 'financeapp.user';

@@ -77,7 +77,7 @@ export default function ProfileScreen({ navigation, route }: Props) {
             <Text style={styles.avatarText}>{initials(user?.full_name)}</Text>
           </LinearGradient>
           <Text style={styles.fullName}>{user?.full_name || 'Finance User'}</Text>
-          <Text style={styles.email} numberOfLines={1}>{user?.email || 'user@financeapp.local'}</Text>
+          <Text style={styles.email} numberOfLines={1}>{user?.email || 'No email on file'}</Text>
         </View>
 
         {refreshing ? <ActivityIndicator color="#E94560" style={styles.loader} /> : null}

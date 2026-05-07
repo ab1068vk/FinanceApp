@@ -21,6 +21,8 @@ export type AuditLog = {
   entity_id?: string | null;
   old_value?: string | null;
   new_value?: string | null;
+  action_label?: string | null;
+  summary?: string | null;
   ip_address?: string | null;
   user_agent?: string | null;
   created_at: string;
@@ -265,9 +267,10 @@ export const updateUserRole = createAsyncThunk<AdminUser, { id: string; role: 'u
   }
 });
 
-export const resetUserPassword = createAsyncThunk<{ success: boolean; must_change_password: boolean }, { id: string; tempPassword: string }, { rejectValue: string }>('admin/resetUserPassword', async ({ id, tempPassword }, { rejectWithValue }) => {
+export const resetUserPassword = createAsyncThunk<{ success: boolean; must_change_password: boolean; temporary_password: string; delivery?: { channel: string; sent: boolean; reason?: string; error?: string } }, { id: string; tempPassword?: string }, { rejectValue: string }>('admin/resetUserPassword', async ({ id, tempPassword }, { rejectWithValue }) => {
   try {
-    const response = await api.post<{ success: boolean; must_change_password: boolean }>(`/api/admin/users/${id}/reset-password`, { temporary_password: tempPassword });
+    const payload = tempPassword?.trim() ? { temporary_password: tempPassword.trim() } : {};
+    const response = await api.post<{ success: boolean; must_change_password: boolean; temporary_password: string; delivery?: { channel: string; sent: boolean; reason?: string; error?: string } }>(`/api/admin/users/${id}/reset-password`, payload);
     return response.data;
   } catch (error) {
     return rejectWithValue(errorMessage(error, 'Unable to reset password'));

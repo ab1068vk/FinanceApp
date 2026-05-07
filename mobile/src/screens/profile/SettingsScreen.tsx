@@ -19,6 +19,7 @@ import { useTheme } from '../../theme';
 import type { FeatherIconName } from '../../utils/icons';
 import { ListPayload, unwrapList } from '../../types/api';
 import { getQueue } from '../../utils/offlineQueue';
+import { SUPPORT_EMAIL } from '../../constants';
 
 type Props = StackScreenProps<ProfileStackParamList, 'Settings'>;
 type CategoryExport = { id: string; name: string; type: string; color?: string | null; icon?: string | null };
@@ -268,12 +269,16 @@ export default function SettingsScreen({ navigation }: Props) {
   };
 
   const contactSupport = async () => {
-    const url = `mailto:support@financeapp.local?subject=${encodeURIComponent('FinanceApp Support')}`;
+    if (!SUPPORT_EMAIL) {
+      Alert.alert('Contact Support', 'Support email is not configured for this app build.');
+      return;
+    }
+    const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('FinanceApp Support')}`;
     if (await Linking.canOpenURL(url)) {
       await Linking.openURL(url);
       return;
     }
-    Alert.alert('Contact Support', 'Email support@financeapp.local with your account email and a short description of the issue.');
+    Alert.alert('Contact Support', `Email ${SUPPORT_EMAIL} with your account email and a short description of the issue.`);
   };
 
   const signOut = () => {

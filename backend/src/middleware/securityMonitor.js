@@ -9,7 +9,9 @@ const patterns = [
   { type: 'sql_injection', pattern: /(\bunion\b(?:\s|\/\*.*?\*\/)+\bselect\b|\bor\b\s+['"]?\d+['"]?\s*=\s*['"]?\d+|\bdrop\b\s+\btable\b|\bwaitfor\b\s+\bdelay\b|0x[0-9a-f]{8,}|--|;\s*(select|insert|update|delete|drop)\b)/i },
   { type: 'path_traversal', pattern: /\.\.[/\\]|%2e%2e/i },
   { type: 'command_injection', pattern: /(\|\||&&|;\s*(cat|ls|curl|wget|powershell|cmd|bash)\b)/i },
+  { type: 'template_injection', pattern: /(\{\{.*\}\}|\$\{.*\}|<%.*%>)/i },
 ];
+const SCANNED_HEADERS = ['user-agent', 'referer', 'origin', 'x-forwarded-for', 'x-real-ip'];
 const STRIKE_WINDOW_MS = Number(process.env.SECURITY_STRIKE_WINDOW_MS) || 10 * 60 * 1000;
 const STRIKE_LIMIT = Number(process.env.SECURITY_STRIKE_LIMIT) || 5;
 const BLOCK_MS = Number(process.env.SECURITY_BLOCK_MS) || 10 * 60 * 1000;
@@ -50,6 +52,20 @@ function preview(value) {
   return String(value).slice(0, 500);
 }
 
+function requestSource(req) {
+  return {
+    ip: clientIp(req),
+    express_ip: req.ip,
+    remote_address: req.socket?.remoteAddress || null,
+    forwarded_for: req.get('x-forwarded-for') || null,
+    real_ip: req.get('x-real-ip') || null,
+    origin: req.get('origin') || null,
+    referer: req.get('referer') || null,
+    user_agent: req.get('user-agent') || null,
+    content_type: req.get('content-type') || null,
+  };
+}
+
 function walk(value, path = []) {
   const findings = [];
   if (typeof value === 'string') {
@@ -72,22 +88,26 @@ function walk(value, path = []) {
   return findings;
 }
 
-function recordSecurityEvent(req, findings) {
-  if (!findings.length) return;
+function recordSecurityEvent(req, findings, action = 'SECURITY_ATTACK_ATTEMPT', extra = {}) {
+  if (!findings.length && action === 'SECURITY_ATTACK_ATTEMPT') return;
 
   const payload = {
     request_id: req.id,
     method: req.method,
     path: req.originalUrl,
+    route_path: req.route?.path || null,
+    source: requestSource(req),
     findings,
+    ...extra,
   };
 
   try {
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, old_value, new_value, ip_address, user_agent, created_at)
-      VALUES (?, NULL, 'SECURITY_ATTACK_ATTEMPT', 'security', NULL, NULL, ?, ?, ?, ?)
+      VALUES (?, NULL, ?, 'security', NULL, NULL, ?, ?, ?, ?)
     `).run(
       crypto.randomUUID(),
+      action,
       serializeAuditValue(payload),
       clientIp(req),
       req.get('user-agent') || null,
@@ -97,12 +117,14 @@ function recordSecurityEvent(req, findings) {
     logger.error('Failed to record security event', { error: error.message });
   }
 
-  logger.warn('Potential attack input detected', {
+  logger.warn(action === 'SECURITY_ATTACK_ATTEMPT' ? 'Potential attack input detected' : 'Security request blocked', {
     method: req.method,
     path: req.originalUrl,
     requestId: req.id,
     ip: clientIp(req),
     findings,
+    action,
+    ...extra,
   });
 }
 
@@ -135,13 +157,24 @@ function securityMonitor(req, res, next) {
   const ip = clientIp(req) || 'unknown';
   const existing = getStrikeState(ip);
   if (existing?.blockedUntil > Date.now()) {
+    recordSecurityEvent(req, [], 'SECURITY_BLOCKED_REQUEST', {
+      reason: existing.reason || 'ip_blocked',
+      blocked_until: new Date(existing.blockedUntil).toISOString(),
+      strike_count: existing.count,
+    });
     return res.status(429).json({ error: 'Too many invalid requests' });
   }
 
+  const headerValues = Object.fromEntries(
+    SCANNED_HEADERS
+      .map((name) => [name, req.get(name)])
+      .filter(([, value]) => Boolean(value))
+  );
   const findings = [
     ...walk(req.body, ['body']),
     ...walk(req.query, ['query']),
     ...walk(req.params, ['params']),
+    ...walk(headerValues, ['headers']),
   ];
   recordSecurityEvent(req, findings);
   if (findings.length) {
@@ -188,5 +221,7 @@ module.exports = {
   blockSecurityIp,
   clearSecurityIp,
   listSecurityBlocks,
+  recordSecurityEvent,
+  requestSource,
   securityMonitor,
 };

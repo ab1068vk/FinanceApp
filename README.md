@@ -157,7 +157,7 @@ node -e "require('bcryptjs').hash('ChangeMeNow1!', 12).then(console.log)"
 - `mobile/src/services`: API client and secure storage.
 - `mobile/src/hooks`: Reusable screen and auth hooks.
 - `mobile/src/utils`: Formatting and utility helpers.
-- `shared/types`: Cross-platform type placeholders.
+- `shared/types`: Reserved for cross-platform type definitions shared by backend and mobile code.
 - `docs`: Project documentation.
 
 #1 cd backend then npm run dev

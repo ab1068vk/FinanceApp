@@ -19,7 +19,7 @@ const budgetRoutes = require('./routes/budgetRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const { securityMonitor } = require('./middleware/securityMonitor');
+const { recordSecurityEvent, securityMonitor } = require('./middleware/securityMonitor');
 const { csrfProtection } = require('./middleware/csrfProtection');
 const { getLastBackupTimestamp } = require('./utils/backup');
 
@@ -239,6 +239,17 @@ app.use((req, res) => {
 
 app.use((err, req, res, _next) => {
   const statusCode = err.statusCode || err.status || 500;
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    recordSecurityEvent(req, [], 'SECURITY_MALFORMED_REQUEST', {
+      reason: 'invalid_json',
+      content_type: req.get('content-type') || null,
+    });
+  } else if (err.message === 'Not allowed by CORS') {
+    recordSecurityEvent(req, [], 'SECURITY_CORS_REJECTED', {
+      reason: 'origin_not_allowed',
+      origin: req.get('origin') || null,
+    });
+  }
 
   logger.error(err.message || 'Unhandled application error', {
     statusCode,

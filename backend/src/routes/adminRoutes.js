@@ -104,6 +104,7 @@ const systemConfigRules = [
   body('audit_retention_months').optional().isInt({ min: 1, max: 120 }).withMessage('audit_retention_months must be 1-120').toInt(),
 ];
 const passwordRules = body('temporary_password')
+  .optional({ values: 'falsy' })
   .isString().withMessage('temporary_password must be a string').bail()
   .isLength({ min: 8 }).withMessage('temporary_password must be at least 8 characters long').bail()
   .matches(/[A-Z]/).withMessage('temporary_password must contain at least one uppercase letter').bail()

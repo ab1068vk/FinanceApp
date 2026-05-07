@@ -141,7 +141,7 @@ export default function AuditLogsScreen({ route }: Props) {
           <Feather name="chevron-right" size={18} color={theme.colors.text.light} />
         </View>
         <Text style={styles.userText} numberOfLines={1}>{item.user_email || 'System / deleted user'}</Text>
-        {attackSummary(item) ? <Text style={styles.muted} numberOfLines={2}>{attackSummary(item)}</Text> : null}
+        <Text style={styles.muted} numberOfLines={2}>{item.summary || attackSummary(item) || item.action_label || item.action.replace(/_/g, ' ')}</Text>
         <Text style={styles.muted}>{item.entity_type || 'System'} - {truncate(item.entity_id)}</Text>
         <View style={styles.metaRow}>
           <Text style={styles.muted}>{prettyDate(item.created_at)}</Text>
@@ -209,7 +209,9 @@ export default function AuditLogsScreen({ route }: Props) {
               </View>
               <ScrollView showsVerticalScrollIndicator={false}>
                 <Text style={styles.detailLabel}>Action</Text>
-                <View style={[styles.badge, { backgroundColor: badgeColor(selectedLog.action, theme.colors), alignSelf: 'flex-start' }]}><Text style={styles.badgeText}>{selectedLog.action}</Text></View>
+                <View style={[styles.badge, { backgroundColor: badgeColor(selectedLog.action, theme.colors), alignSelf: 'flex-start' }]}><Text style={styles.badgeText}>{selectedLog.action_label || selectedLog.action}</Text></View>
+                <Text style={styles.detailLabel}>Summary</Text>
+                <Text style={styles.userText}>{selectedLog.summary || attackSummary(selectedLog) || selectedLog.action.replace(/_/g, ' ')}</Text>
                 <Text style={styles.detailLabel}>User</Text>
                 <Text style={styles.userText}>{selectedLog.user_email || 'System / deleted user'}</Text>
                 <Text style={styles.muted}>{selectedLog.user_full_name || selectedLog.user_id || 'No user attached'}</Text>

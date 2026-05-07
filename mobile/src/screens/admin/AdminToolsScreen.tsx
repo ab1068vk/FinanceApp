@@ -323,7 +323,7 @@ export default function AdminToolsScreen() {
       return;
     }
     await runAction('API token created', async () => {
-      const response = await api.post<{ id: string; name: string; scopes: string[]; token: string }>('/api/admin/api-tokens', { name: tokenName.trim(), scopes: ['reports:read'] });
+      const response = await api.post<{ id: string; name: string; scopes: string[]; token: string }>('/api/admin/api-tokens', { name: tokenName.trim(), scopes: ['read:users'] });
       setTokenName('');
       setResult({ title: 'Copy API Token Now', body: response.data.token });
     });

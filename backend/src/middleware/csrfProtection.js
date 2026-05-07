@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { recordSecurityEvent } = require('./securityMonitor');
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CSRF_COOKIE_NAME = 'financeapp_csrf';
@@ -83,6 +84,12 @@ function csrfProtection(req, res, next) {
   const provided = req.get('x-csrf-token') || req.body?._csrf;
 
   if (!provided || provided !== cookieToken || provided !== token || !isValidToken(provided)) {
+    recordSecurityEvent(req, [], 'SECURITY_CSRF_FAILURE', {
+      reason: 'invalid_csrf_token',
+      has_cookie_token: Boolean(cookieToken),
+      has_provided_token: Boolean(provided),
+      path: req.originalUrl,
+    });
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
 

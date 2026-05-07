@@ -344,7 +344,12 @@ describe('Admin API', () => {
       .send({ temporary_password: 'TempPass1!' })
       .expect(200);
 
-    expect(response.body).toEqual({ success: true, must_change_password: true });
+    expect(response.body).toEqual({
+      success: true,
+      must_change_password: true,
+      temporary_password: 'TempPass1!',
+      delivery: expect.objectContaining({ channel: 'manual', sent: false }),
+    });
 
     const login = await request(app)
       .post('/api/auth/login')
@@ -377,6 +382,36 @@ describe('Admin API', () => {
       .expect(200);
 
     expect(auditLogs.body.data.some((log) => log.entity_id === target.user.id)).toBe(true);
+    expect(auditLogs.body.data.find((log) => log.entity_id === target.user.id)).toEqual(expect.objectContaining({
+      action_label: 'Reset User Password',
+      summary: expect.stringContaining('reset the password'),
+      old_value: expect.any(String),
+      new_value: expect.any(String),
+    }));
+
+    const notification = await request(app)
+      .get('/api/auth/notifications')
+      .set('Authorization', `Bearer ${changed.body.accessToken}`)
+      .expect(200);
+    expect(notification.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'admin-password-reset',
+        title: 'Password reset by admin',
+      }),
+    ]));
+
+    const generatedTarget = await createUserSession('generated-reset-target');
+    const generated = await request(app)
+      .post(`/api/admin/users/${generatedTarget.user.id}/reset-password`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({})
+      .expect(200);
+    expect(generated.body.temporary_password).toEqual(expect.any(String));
+    expect(generated.body.temporary_password).toHaveLength(16);
+    await request(app)
+      .post('/api/auth/login')
+      .send({ email: generatedTarget.credentials.email, password: generated.body.temporary_password })
+      .expect(200);
   });
 
   test('returns managed user transactions and system health', async () => {
@@ -794,10 +829,27 @@ describe('Admin API', () => {
     const token = await request(app)
       .post('/api/admin/api-tokens')
       .set('Authorization', `Bearer ${admin.accessToken}`)
-      .send({ name: 'Reporting token', scopes: ['reports:read'] })
+      .send({ name: 'Reporting token', scopes: ['read:users'] })
       .expect(201);
     expect(token.body.token).toMatch(/^fa_/);
+    expect(token.body.scopes).toEqual(['read:users']);
     await request(app).delete(`/api/admin/api-tokens/${token.body.id}`).set('Authorization', `Bearer ${admin.accessToken}`).expect(200);
+
+    const invalidToken = await request(app)
+      .post('/api/admin/api-tokens')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Invalid reporting token', scopes: ['reports:read'] })
+      .expect(400);
+    expect(invalidToken.body.error).toContain('reports:read');
+    expect(invalidToken.body.allowed_scopes).toContain('read:users');
+    const invalidTokenAudit = await request(app)
+      .get('/api/admin/audit-logs?action=ADMIN_REJECTED_API_TOKEN_SCOPE&limit=1')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+    expect(invalidTokenAudit.body.data[0]).toEqual(expect.objectContaining({
+      action_label: 'Rejected Api Token Scope',
+      summary: expect.stringContaining('unsupported scope'),
+    }));
 
     const webhook = await request(app)
       .post('/api/admin/webhooks')
@@ -817,7 +869,7 @@ describe('Admin API', () => {
     expect(deliveries.body.data).toEqual([]);
   });
 
-  test('hard-deletes a user and removes deleted-user placeholders', async () => {
+  test('hard-deletes a user and removes deleted-user records', async () => {
     const target = await createUserSession('delete-target');
     const retainedAuditBefore = db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE user_id = ? OR entity_id = ?').get(target.user.id, target.user.id).count;
     expect(retainedAuditBefore).toBeGreaterThan(0);

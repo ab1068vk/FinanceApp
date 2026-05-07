@@ -170,7 +170,7 @@ function HorizontalBar({ label, value, max }: { label: string; value: number; ma
 }
 
 function AuditRow({ log }: { log: AuditLog }) {
-  return <View style={styles.auditRow}><View style={[styles.actionBadge, { backgroundColor: `${badgeColor(log.action)}18` }]}><Text style={[styles.actionText, { color: badgeColor(log.action) }]}>{log.action.replace('ADMIN_', '')}</Text></View><View style={styles.auditTextBlock}><Text style={styles.auditEmail}>{log.user_email || 'System'}</Text><Text style={styles.auditDate}>{format(new Date(log.created_at), 'MMM d, h:mm a')}</Text></View></View>;
+  return <View style={styles.auditRow}><View style={[styles.actionBadge, { backgroundColor: `${badgeColor(log.action)}18` }]}><Text style={[styles.actionText, { color: badgeColor(log.action) }]}>{log.action_label || log.action.replace('ADMIN_', '')}</Text></View><View style={styles.auditTextBlock}><Text style={styles.auditEmail}>{log.summary || log.user_email || 'System'}</Text><Text style={styles.auditDate}>{format(new Date(log.created_at), 'MMM d, h:mm a')}</Text></View></View>;
 }
 
 function EmptyText({ text }: { text: string }) {
