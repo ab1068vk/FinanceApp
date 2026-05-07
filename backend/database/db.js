@@ -531,7 +531,7 @@ function ensureSchemaUpdates() {
         account_id TEXT,
         category_id TEXT,
         type TEXT NOT NULL CHECK (type IN ('income', 'expense', 'transfer')),
-        amount REAL NOT NULL CHECK (amount >= 0),
+        amount INTEGER NOT NULL CHECK (amount >= 0),
         description TEXT,
         note TEXT,
         date TEXT NOT NULL,
@@ -716,7 +716,7 @@ function ensureSchemaUpdates() {
       user_id TEXT NOT NULL,
       account_id TEXT NOT NULL,
       category_id TEXT,
-      amount REAL NOT NULL CHECK (amount > 0),
+      amount INTEGER NOT NULL CHECK (amount > 0),
       description TEXT,
       frequency TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly', 'yearly')),
       next_due_date TEXT NOT NULL,
@@ -1084,6 +1084,7 @@ migrate();
 module.exports = {
   db,
   dbPath,
+  migrateMoneyColumnsToCents,
   migrate,
   purgeDeletedUserArchives,
 };

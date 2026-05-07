@@ -12,8 +12,18 @@ const validate = (req, res, next) => {
 };
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
+const decimalAmount = (chain) => chain
+  .isFloat({ min: 0 })
+  .withMessage('amount must be a non-negative number')
+  .bail()
+  .custom((value) => {
+    if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+      throw new Error('amount must have at most 2 decimal places');
+    }
+    return true;
+  });
 const createRules = [
-  body('amount').isFloat({ gt: 0 }).withMessage('amount must be a positive number'),
+  decimalAmount(body('amount').notEmpty()),
   body('category_id').isUUID().withMessage('category_id must be a valid UUID'),
   body('period').isIn(periods).withMessage(`period must be one of: ${periods.join(', ')}`),
   body('start_date').custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
@@ -21,7 +31,7 @@ const createRules = [
 ];
 const updateRules = [
   idParam,
-  body('amount').optional().isFloat({ gt: 0 }).withMessage('amount must be a positive number'),
+  decimalAmount(body('amount').optional()),
   body('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),
   body('period').optional().isIn(periods).withMessage(`period must be one of: ${periods.join(', ')}`),
   body('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),

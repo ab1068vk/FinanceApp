@@ -42,6 +42,16 @@ const validate = (req, res, next) => {
 };
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
+const decimalMoney = (chain, field) => chain
+  .isFloat({ min: 0 })
+  .withMessage(`${field} must be a non-negative number`)
+  .bail()
+  .custom((value) => {
+    if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+      throw new Error(`${field} must have at most 2 decimal places`);
+    }
+    return true;
+  });
 const paging = [
   query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
@@ -57,8 +67,8 @@ const transactionFilters = [
   query('type').optional().isIn(transactionTypes).withMessage(`type must be one of: ${transactionTypes.join(', ')}`),
   query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
   query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
-  query('min_amount').optional().isFloat({ min: 0 }).withMessage('min_amount must be a non-negative number'),
-  query('max_amount').optional().isFloat({ min: 0 }).withMessage('max_amount must be a non-negative number'),
+  decimalMoney(query('min_amount').optional(), 'min_amount'),
+  decimalMoney(query('max_amount').optional(), 'max_amount'),
   query('include_deleted').optional().isBoolean().withMessage('include_deleted must be boolean'),
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
   ...paging,
@@ -232,7 +242,17 @@ router.delete('/users/:id/accounts/:accountId', [
 router.post('/users/:id/accounts/:accountId/correction', requireConfirmation('balance_correction'), [
   idParam,
   param('accountId').isUUID().withMessage('accountId must be a valid UUID'),
-  body('target_balance').isFloat().withMessage('target_balance must be a number'),
+  body('target_balance')
+    .notEmpty()
+    .isFloat()
+    .withMessage('target_balance must be a number')
+    .bail()
+    .custom((value) => {
+      if (!/^-?\d+(\.\d{1,2})?$/.test(String(value).trim())) {
+        throw new Error('target_balance must have at most 2 decimal places');
+      }
+      return true;
+    }),
   body('reason').isString().isLength({ min: 5, max: 500 }).withMessage('reason must be 5-500 characters'),
 ], validate, adminController.createAccountBalanceCorrection);
 router.get('/users/:id/export', [idParam, ...exportPaging], validate, adminController.exportUserData);

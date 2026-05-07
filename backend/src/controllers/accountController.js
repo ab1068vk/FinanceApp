@@ -4,6 +4,7 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { accountCurrentBalanceExpr, warnIfAccountBalanceMismatch } = require('../utils/accountBalance');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
+const { amountToCents, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
 
 const NON_NEGATIVE_ACCOUNT_TYPES = new Set(['checking', 'savings', 'cash']);
@@ -90,9 +91,9 @@ function moveAccountTransactionsToCash(accountId, userId) {
 
 function createAccount(req, res, next) {
   try {
-    const initialBalance = Number(req.body.balance || 0);
+    const initialBalance = amountToCents(req.body.balance || 0);
     const hasOverdraftLimit = Object.prototype.hasOwnProperty.call(req.body, 'overdraft_limit');
-    const overdraftLimit = hasOverdraftLimit ? Math.max(Number(req.body.overdraft_limit || 0), 0) : null;
+    const overdraftLimit = hasOverdraftLimit ? Math.max(amountToCents(req.body.overdraft_limit || 0), 0) : null;
     if (hasOverdraftLimit && NON_NEGATIVE_ACCOUNT_TYPES.has(req.body.type) && initialBalance < -overdraftLimit) {
       return res.status(400).json({ error: 'Opening balance exceeds the overdraft limit for this account type' });
     }
@@ -133,7 +134,7 @@ function createAccount(req, res, next) {
 
       audit(req, 'ACCOUNT_CREATED', 'account', account.id, null, account);
     })();
-    return res.status(201).json(account);
+    return res.status(201).json(serializeMoney(account));
   } catch (error) { return next(error); }
 }
 
@@ -144,7 +145,7 @@ function getAccounts(req, res, next) {
     const accounts = db.prepare(`SELECT accounts.*, ${balanceExpr} AS current_balance
       FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(req.user.id, limit, offset);
     accounts.forEach((account) => warnIfAccountBalanceMismatch(account, { source: 'getAccounts' }));
-    return res.json({ data: accounts, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(accounts), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
 }
 
@@ -156,7 +157,7 @@ function getAccount(req, res, next) {
     warnIfAccountBalanceMismatch(account, { source: 'getAccount' });
     account.recent_transactions = db.prepare(`SELECT * FROM transactions
       WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL ORDER BY date DESC, created_at DESC LIMIT 5`).all(req.params.id, req.user.id);
-    return res.json(account);
+    return res.json(serializeMoney(account));
   } catch (error) { return next(error); }
 }
 
@@ -165,16 +166,29 @@ function updateAccount(req, res, next) {
     const oldAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ? AND is_active = 1').get(req.params.id, req.user.id);
     if (!oldAccount) return res.status(404).json({ error: 'Account not found' });
 
-    const allowed = ['name', 'color', 'icon', 'currency', 'overdraft_limit'];
+    const allowed = ['name', 'color', 'icon', 'currency', 'balance', 'overdraft_limit'];
     const updates = {};
     for (const field of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-        updates[field] = field === 'currency' ? req.body[field].toUpperCase() : field === 'overdraft_limit' ? Math.max(Number(req.body[field] || 0), 0) : req.body[field];
+        if (field === 'currency') updates[field] = req.body[field].toUpperCase();
+        else if (field === 'overdraft_limit') updates[field] = Math.max(amountToCents(req.body[field] || 0), 0);
+        else if (field === 'balance') updates[field] = amountToCents(req.body[field] || 0);
+        else updates[field] = req.body[field];
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'balance')
+      && oldAccount.overdraft_limit !== null
+      && oldAccount.overdraft_limit !== undefined
+      && NON_NEGATIVE_ACCOUNT_TYPES.has(oldAccount.type)
+      && updates.balance < -Math.max(Number(oldAccount.overdraft_limit || 0), 0)) {
+      return res.status(400).json({ error: 'Balance exceeds the overdraft limit for this account type' });
     }
     if (Object.prototype.hasOwnProperty.call(updates, 'overdraft_limit') && NON_NEGATIVE_ACCOUNT_TYPES.has(oldAccount.type)) {
       const current = db.prepare(`SELECT ${balanceExpr} AS current_balance FROM accounts WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
-      if (Number(current?.current_balance || 0) < -updates.overdraft_limit) {
+      const balanceToValidate = Object.prototype.hasOwnProperty.call(updates, 'balance')
+        ? updates.balance
+        : Number(current?.current_balance || 0);
+      if (balanceToValidate < -updates.overdraft_limit) {
         return res.status(400).json({ error: 'Current balance exceeds the requested overdraft limit' });
       }
     }
@@ -185,7 +199,7 @@ function updateAccount(req, res, next) {
     db.prepare(`UPDATE accounts SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
     const newAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
     audit(req, 'ACCOUNT_UPDATED', 'account', req.params.id, oldAccount, newAccount);
-    return res.json(newAccount);
+    return res.json(serializeMoney(newAccount));
   } catch (error) { return next(error); }
 }
 

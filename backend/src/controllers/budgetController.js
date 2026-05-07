@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { db } = require('../../database/db');
 const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
+const { amountToCents, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
 
 function nowIso() { return new Date().toISOString(); }
@@ -94,14 +95,14 @@ function createBudget(req, res, next) {
     const dates = normalizeBudgetDates(req.body.period, req.body.start_date, req.body.end_date);
     assertNoBudgetOverlap(req.user.id, req.body.category_id, dates.start_date, dates.end_date);
     const budget = {
-      id: crypto.randomUUID(), user_id: req.user.id, category_id: req.body.category_id, amount: Number(req.body.amount),
+      id: crypto.randomUUID(), user_id: req.user.id, category_id: req.body.category_id, amount: amountToCents(req.body.amount, { allowZero: false }),
       period: req.body.period, start_date: dates.start_date, end_date: dates.end_date,
       created_at: nowIso(), updated_at: null,
     };
     db.prepare(`INSERT INTO budgets (id, user_id, category_id, amount, period, start_date, end_date, created_at, updated_at)
       VALUES (@id, @user_id, @category_id, @amount, @period, @start_date, @end_date, @created_at, @updated_at)`).run(budget);
     audit(req, 'BUDGET_CREATED', 'budget', budget.id, null, budget);
-    return res.status(201).json(budget);
+    return res.status(201).json(serializeMoney(budget));
   } catch (error) { return next(error); }
 }
 
@@ -116,7 +117,7 @@ function getBudgets(req, res, next) {
       FROM budgets b LEFT JOIN categories c ON c.id = b.category_id
       WHERE b.user_id = ? ORDER BY b.created_at DESC LIMIT ? OFFSET ?`).all(req.user.id, limit, offset);
     const data = budgets.map((budget) => ({ ...budget, remaining: Number(budget.amount) - Number(budget.current_spending) }));
-    return res.json({ data, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(data), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
 }
 
@@ -136,7 +137,7 @@ function getBudget(req, res, next) {
       AND datetime(date) >= datetime(?) AND (? IS NULL OR datetime(date) <= datetime(?, '+1 day', '-1 second'))
       GROUP BY week ORDER BY week`).all(req.user.id, budget.category_id, budget.start_date, budget.end_date, budget.end_date);
     const current = Number(currentSpending.total);
-    return res.json({ ...budget, current_spending: current, remaining: Number(budget.amount) - current, weekly_breakdown: breakdown });
+    return res.json(serializeMoney({ ...budget, current_spending: current, remaining: Number(budget.amount) - current, weekly_breakdown: breakdown }));
   } catch (error) { return next(error); }
 }
 
@@ -148,7 +149,7 @@ function updateBudget(req, res, next) {
     const allowed = ['amount', 'category_id', 'period', 'start_date', 'end_date'];
     const updates = {};
     for (const field of allowed) if (Object.prototype.hasOwnProperty.call(req.body, field)) updates[field] = req.body[field];
-    if (updates.amount) updates.amount = Number(updates.amount);
+    if (Object.prototype.hasOwnProperty.call(updates, 'amount')) updates.amount = amountToCents(updates.amount, { allowZero: false });
     const nextStartDate = Object.prototype.hasOwnProperty.call(updates, 'start_date') ? updates.start_date : oldBudget.start_date;
     const nextEndDate = Object.prototype.hasOwnProperty.call(updates, 'end_date') ? updates.end_date : oldBudget.end_date;
     const nextPeriod = Object.prototype.hasOwnProperty.call(updates, 'period') ? updates.period : oldBudget.period;
@@ -170,7 +171,7 @@ function updateBudget(req, res, next) {
     db.prepare(`UPDATE budgets SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
     const newBudget = db.prepare('SELECT * FROM budgets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
     audit(req, 'BUDGET_UPDATED', 'budget', req.params.id, oldBudget, newBudget);
-    return res.json(newBudget);
+    return res.json(serializeMoney(newBudget));
   } catch (error) { return next(error); }
 }
 

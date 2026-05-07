@@ -5,6 +5,7 @@ const { clientIp } = require('../utils/clientIp');
 const { blockAccessToken } = require('../utils/accessTokenBlocklist');
 const logger = require('../utils/logger');
 const { createDefaultCashAccount } = require('../utils/defaultAccount');
+const { serializeMoney } = require('../utils/money');
 const { DEFAULT_PREFS, sendPushNotification, upsertDefaultPreferences } = require('../utils/pushNotifications');
 const {
   deliverEmailVerificationToken,
@@ -945,7 +946,7 @@ function exportMyData(req, res, next) {
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="financeapp-data-${userId}.json"`);
-    return res.status(200).send(JSON.stringify(payload, null, 2));
+    return res.status(200).send(JSON.stringify(serializeMoney(payload), null, 2));
   } catch (error) {
     return next(error);
   }

@@ -8,6 +8,7 @@ const {
   warnIfAccountBalanceMismatch,
 } = require('../utils/accountBalance');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
+const { amountToCents, centsToAmount, serializeMoney } = require('../utils/money');
 const { sendPushNotification } = require('../utils/pushNotifications');
 
 const MAX_TRANSACTION_AMOUNT = 100000000;
@@ -162,9 +163,9 @@ function notifyBudgetOverspendIfNeeded(userId, transaction) {
   if (overBy <= 0) return;
   void sendPushNotification(
     userId,
-    `Budget exceeded: ${budget.category_name || 'Category'} is over by ${overBy.toFixed(2)}`,
+    `Budget exceeded: ${budget.category_name || 'Category'} is over by ${centsToAmount(overBy).toFixed(2)}`,
     `${budget.category_name || 'This budget'} has exceeded its limit.`,
-    { type: 'budget_overspend', budgetId: budget.id, overBy }
+    { type: 'budget_overspend', budgetId: budget.id, overBy: centsToAmount(overBy) }
   ).catch((pushError) => logger.warn('Budget overspend push failed', { userId, error: pushError.message }));
 }
 
@@ -187,8 +188,8 @@ function createTransaction(req, res, next) {
     if (categoryId && !getAllowedCategory(categoryId, req.user.id)) return res.status(400).json({ error: 'category_id is invalid' });
     if (req.body.type !== 'transfer' && !categoryId) return res.status(400).json({ error: 'category_id is required' });
 
-    const amount = Number(req.body.amount);
-    assertTransactionAmount(amount);
+    assertTransactionAmount(Number(req.body.amount));
+    const amount = amountToCents(req.body.amount, { allowZero: false });
     const transactionDate = validateTransactionDate(req.body.date);
     const createdAt = nowIso();
     const base = {
@@ -240,15 +241,16 @@ function createTransaction(req, res, next) {
 
     const hydrated = getTransactionsWithDetails(created.map((transaction) => transaction.id), req.user.id);
     created.forEach((transaction) => notifyBudgetOverspendIfNeeded(req.user.id, transaction));
-    if (amount >= Number(process.env.LARGE_TRANSACTION_AMOUNT || 1000)) {
+    const largeTransactionThreshold = amountToCents(process.env.LARGE_TRANSACTION_AMOUNT || 1000, { allowZero: false });
+    if (amount >= largeTransactionThreshold) {
       void sendPushNotification(
         req.user.id,
-        `Large transaction: ${amount} on ${account.name}`,
+        `Large transaction: ${centsToAmount(amount)} on ${account.name}`,
         base.description || 'A large transaction was recorded.',
         { type: 'large_transaction', transactionId: created[0]?.id }
       ).catch((pushError) => logger.warn('Large transaction push failed', { userId: req.user.id, error: pushError.message }));
     }
-    return res.status(201).json(base.type === 'transfer' ? { transactions: hydrated } : hydrated[0]);
+    return res.status(201).json(serializeMoney(base.type === 'transfer' ? { transactions: hydrated } : hydrated[0]));
   } catch (error) { return next(error); }
 }
 
@@ -264,8 +266,8 @@ function getTransactions(req, res, next) {
     }
     if (req.query.start_date) { where.push('t.date >= ?'); params.push(rangeStartIso(req.query.start_date)); }
     if (req.query.end_date) { where.push('t.date <= ?'); params.push(rangeEndIso(req.query.end_date)); }
-    if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(Number(req.query.min_amount)); }
-    if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(Number(req.query.max_amount)); }
+    if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(amountToCents(req.query.min_amount)); }
+    if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(amountToCents(req.query.max_amount)); }
     if (req.query.search) {
       const search = `%${req.query.search.toLowerCase()}%`;
       where.push('(LOWER(COALESCE(t.description, \'\')) LIKE ? OR LOWER(COALESCE(t.note, \'\')) LIKE ? OR LOWER(COALESCE(t.tags, \'\')) LIKE ?)');
@@ -279,7 +281,7 @@ function getTransactions(req, res, next) {
       LEFT JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
       WHERE ${whereSql}
       ORDER BY t.date DESC, t.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-    return res.json({ data: transactions, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(transactions), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
 }
 
@@ -289,7 +291,7 @@ function getTransaction(req, res, next) {
       LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
       WHERE t.id = ? AND t.user_id = ? AND t.admin_deleted_at IS NULL`).get(req.params.id, req.user.id);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-    return res.json(tx);
+    return res.json(serializeMoney(tx));
   } catch (error) { return next(error); }
 }
 
@@ -308,8 +310,8 @@ function updateTransaction(req, res, next) {
     let nextAmount;
     const amountChanged = Object.prototype.hasOwnProperty.call(req.body, 'amount');
     if (amountChanged) {
-      nextAmount = Number(req.body.amount);
-      assertTransactionAmount(nextAmount);
+      assertTransactionAmount(Number(req.body.amount));
+      nextAmount = amountToCents(req.body.amount, { allowZero: false });
     }
     for (const field of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -371,7 +373,7 @@ function updateTransaction(req, res, next) {
 
     const newTx = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? AND admin_deleted_at IS NULL').get(req.params.id, req.user.id);
     audit(req, 'TRANSACTION_UPDATED', 'transaction', req.params.id, oldTx, newTx);
-    return res.json(newTx);
+    return res.json(serializeMoney(newTx));
   } catch (error) { return next(error); }
 }
 
@@ -434,12 +436,12 @@ function getTransactionSummary(req, res, next) {
       ORDER BY total DESC
     `).all(...params);
 
-    return res.json({
+    return res.json(serializeMoney({
       total_income: totals.total_income,
       total_expense: totals.total_expense,
       net: totals.total_income - totals.total_expense,
       grouped_by_category: grouped,
-    });
+    }));
   } catch (error) { return next(error); }
 }
 

@@ -10,6 +10,7 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
+const { amountToCents, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
 
@@ -181,7 +182,7 @@ function decodeExportCursor(value) {
 }
 
 function writeJsonValue(res, key, value, prefix = ',') {
-  res.write(`${prefix}"${key}":${JSON.stringify(value)}`);
+  res.write(`${prefix}"${key}":${JSON.stringify(serializeMoney(value))}`);
 }
 
 function streamJsonArray(res, key, statement, params, limit, offset) {
@@ -196,7 +197,7 @@ function streamJsonArray(res, key, statement, params, limit, offset) {
       break;
     }
     if (!first) res.write(',');
-    res.write(JSON.stringify(row));
+    res.write(JSON.stringify(serializeMoney(row)));
     first = false;
     count += 1;
   }
@@ -420,13 +421,13 @@ function getDashboardStats(req, res, next) {
         inactive: userCounts.inactive || 0,
         total: userCounts.total || 0,
       },
-      total_transactions: transactionTotals,
+      total_transactions: serializeMoney(transactionTotals),
       total_accounts: totalAccounts,
       deleted_users_count: deletedUsersCount,
       new_users_this_month: newUsersThisMonth,
       new_transactions_this_month: newTransactionsThisMonth,
-      top_5_categories_by_spending: topCategories,
-      daily_transaction_volume: dailyVolume,
+      top_5_categories_by_spending: serializeMoney(topCategories),
+      daily_transaction_volume: serializeMoney(dailyVolume),
       system_health: {
         db_size_mb: getDbSizeMb(),
         log_count: logStats.log_count,
@@ -510,7 +511,7 @@ function getUser(req, res, next) {
       LIMIT 10
     `).all(req.params.id, req.params.id);
 
-    return res.json({ user: sanitizeUser(user), summary, recent_audit_logs: auditLogs });
+    return res.json(serializeMoney({ user: sanitizeUser(user), summary, recent_audit_logs: auditLogs }));
   } catch (error) {
     return next(error);
   }
@@ -572,7 +573,7 @@ function getDeletedUsers(req, res, next) {
       ORDER BY deleted_at DESC
       LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
-    return res.json({ data: users, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(users), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -589,7 +590,7 @@ function getDeletedUser(req, res, next) {
       details = {};
     }
     delete row.details_json;
-    return res.json({ user: row, details });
+    return res.json(serializeMoney({ user: row, details }));
   } catch (error) {
     return next(error);
   }
@@ -703,7 +704,7 @@ function deleteUser(req, res, next) {
       });
     })();
 
-    return res.json({ success: true, deleted: true, hard_deleted: true, archive_id: archivedId });
+    return res.json(serializeMoney({ success: true, deleted: true, hard_deleted: true, archive_id: archivedId }));
   } catch (error) {
     return next(error);
   }
@@ -772,6 +773,14 @@ function getUserTransactions(req, res, next) {
       where.push('t.date <= ?');
       params.push(rangeEndIso(req.query.end_date));
     }
+    if (req.query.min_amount) {
+      where.push('t.amount >= ?');
+      params.push(amountToCents(req.query.min_amount));
+    }
+    if (req.query.max_amount) {
+      where.push('t.amount <= ?');
+      params.push(amountToCents(req.query.max_amount));
+    }
     if (req.query.search) {
       where.push('LOWER(t.description) LIKE ?');
       params.push(`%${req.query.search.toLowerCase()}%`);
@@ -795,7 +804,7 @@ function getUserTransactions(req, res, next) {
       result_count: transactions.length,
     });
 
-    return res.json({ data: transactions, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(transactions), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -822,10 +831,10 @@ function getUserSpendingByCategory(req, res, next) {
     `).all(...params);
     const total = rows.reduce((sum, row) => sum + Number(row.total), 0);
 
-    return res.json({
+    return res.json(serializeMoney({
       data: rows.map((row) => ({ ...row, percent: total > 0 ? (Number(row.total) / total) * 100 : 0 })),
       total,
-    });
+    }));
   } catch (error) {
     return next(error);
   }
@@ -871,7 +880,7 @@ function getUserBudgetPerformance(req, res, next) {
       ORDER BY b.created_at DESC
     `).all(req.params.id);
 
-    return res.json({
+    return res.json(serializeMoney({
       data: rows.map((budget) => {
         const current = Number(budget.current_spending || 0);
         const amount = Number(budget.amount || 0);
@@ -882,7 +891,7 @@ function getUserBudgetPerformance(req, res, next) {
           status: amount > 0 && current > amount ? 'over' : 'within',
         };
       }),
-    });
+    }));
   } catch (error) {
     return next(error);
   }
@@ -1013,8 +1022,8 @@ function getAllTransactions(req, res, next) {
     if (req.query.include_deleted !== 'true') where.push('t.admin_deleted_at IS NULL');
     if (req.query.start_date) { where.push('t.date >= ?'); params.push(rangeStartIso(req.query.start_date)); }
     if (req.query.end_date) { where.push('t.date <= ?'); params.push(rangeEndIso(req.query.end_date)); }
-    if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(Number(req.query.min_amount)); }
-    if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(Number(req.query.max_amount)); }
+    if (req.query.min_amount) { where.push('t.amount >= ?'); params.push(amountToCents(req.query.min_amount)); }
+    if (req.query.max_amount) { where.push('t.amount <= ?'); params.push(amountToCents(req.query.max_amount)); }
     if (req.query.search) {
       const search = `%${String(req.query.search).toLowerCase()}%`;
       where.push('(LOWER(COALESCE(t.description, \'\')) LIKE ? OR LOWER(COALESCE(t.note, \'\')) LIKE ? OR LOWER(COALESCE(u.email, \'\')) LIKE ? OR LOWER(COALESCE(u.full_name, \'\')) LIKE ?)');
@@ -1034,7 +1043,7 @@ function getAllTransactions(req, res, next) {
     `).all(...params, limit, offset);
 
     audit(req, 'ADMIN_VIEWED_GLOBAL_TRANSACTIONS', 'transaction', null, null, { filters: req.query, result_count: transactions.length });
-    return res.json({ data: transactions, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(transactions), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1052,7 +1061,7 @@ function getAdminTransaction(req, res, next) {
     `).get(req.params.id);
     if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
     audit(req, 'ADMIN_VIEWED_TRANSACTION_DETAIL', 'transaction', req.params.id, null, { user_id: transaction.user_id });
-    return res.json(transaction);
+    return res.json(serializeMoney(transaction));
   } catch (error) {
     return next(error);
   }
@@ -1098,7 +1107,7 @@ function getUserAccounts(req, res, next) {
       ORDER BY a.is_active DESC, a.created_at DESC
     `).all(req.params.id);
     audit(req, 'ADMIN_VIEWED_USER_DATA', 'user', req.params.id, null, { data_type: 'accounts', result_count: accounts.length });
-    return res.json({ data: accounts });
+    return res.json({ data: serializeMoney(accounts) });
   } catch (error) {
     return next(error);
   }
@@ -1114,7 +1123,7 @@ function updateUserAccountStatus(req, res, next) {
       db.prepare('UPDATE accounts SET is_active = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(isActive, updatedAt, req.params.accountId, req.params.id);
       audit(req, 'ADMIN_UPDATED_USER_ACCOUNT_STATUS', 'account', req.params.accountId, account, { ...account, is_active: isActive, reason: req.body.reason || null });
     })();
-    return res.json(db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.accountId, req.params.id));
+    return res.json(serializeMoney(db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.accountId, req.params.id)));
   } catch (error) {
     return next(error);
   }
@@ -1170,12 +1179,11 @@ function createAccountBalanceCorrection(req, res, next) {
   try {
     const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.accountId, req.params.id);
     if (!account) return res.status(404).json({ error: 'Account not found' });
-    const targetBalance = Number(req.body.target_balance);
-    if (!Number.isFinite(targetBalance)) return res.status(400).json({ error: 'target_balance must be a number' });
+    const targetBalance = amountToCents(req.body.target_balance);
     const reason = String(req.body.reason || '').trim();
     if (reason.length < 5) return res.status(400).json({ error: 'A correction reason of at least 5 characters is required' });
     const delta = targetBalance - Number(account.balance || 0);
-    if (Math.abs(delta) < 0.01) return res.status(400).json({ error: 'Account balance already matches target_balance' });
+    if (Math.abs(delta) < 1) return res.status(400).json({ error: 'Account balance already matches target_balance' });
     const now = nowIso();
     const correction = {
       id: crypto.randomUUID(),
@@ -1214,7 +1222,7 @@ function createAccountBalanceCorrection(req, res, next) {
       updateStoredBalance(account.id, req.params.id, delta);
       audit(req, 'ADMIN_CREATED_BALANCE_CORRECTION', 'account', account.id, { balance: account.balance }, { target_balance: targetBalance, delta, reason, transaction_id: correction.id });
     })();
-    return res.status(201).json({ transaction: correction, account: db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id) });
+    return res.status(201).json(serializeMoney({ transaction: correction, account: db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id) }));
   } catch (error) {
     return next(error);
   }
@@ -1521,7 +1529,7 @@ function getReports(req, res, next) {
       LIMIT 100
     `).all();
     audit(req, 'ADMIN_VIEWED_ADVANCED_REPORTS', 'report', null, null, { monthly: monthly.length, cohorts: cohorts.length, categories: categories.length });
-    return res.json({ monthly_financials: monthly, cohorts, categories });
+    return res.json(serializeMoney({ monthly_financials: monthly, cohorts, categories }));
   } catch (error) {
     return next(error);
   }
@@ -1546,8 +1554,9 @@ function exportReportCsv(req, res, next) {
         FROM transactions WHERE admin_deleted_at IS NULL GROUP BY substr(date, 1, 7) ORDER BY month DESC
       `).all();
     void dataReq;
-    const headers = Object.keys(rows[0] || { empty: '' });
-    const csv = [headers.join(','), ...rows.map((row) => headers.map((key) => JSON.stringify(row[key] ?? '')).join(','))].join('\n');
+    const serializedRows = serializeMoney(rows);
+    const headers = Object.keys(serializedRows[0] || { empty: '' });
+    const csv = [headers.join(','), ...serializedRows.map((row) => headers.map((key) => JSON.stringify(row[key] ?? '')).join(','))].join('\n');
     audit(req, 'ADMIN_EXPORTED_REPORT_CSV', 'report', String(type), null, { rows: rows.length });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${type}-report.csv"`);
