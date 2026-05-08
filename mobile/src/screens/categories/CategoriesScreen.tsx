@@ -21,7 +21,7 @@ type Category = {
   icon?: string | null;
   color?: string | null;
   type: CategoryType;
-  is_default?: number;
+  is_default?: boolean;
   sort_order?: number;
 };
 type SummaryGroup = { category_id?: string | null; category_name?: string; type?: CategoryType; total?: number };
@@ -36,7 +36,7 @@ function formatCurrency(amount: number) {
 
 function sortCategories(categories: Category[]) {
   return [...categories].sort((left, right) => {
-    if ((right.is_default || 0) !== (left.is_default || 0)) return (right.is_default || 0) - (left.is_default || 0);
+    if (Number(right.is_default || false) !== Number(left.is_default || false)) return Number(right.is_default || false) - Number(left.is_default || false);
     if ((left.sort_order || 0) !== (right.sort_order || 0)) return (left.sort_order || 0) - (right.sort_order || 0);
     return left.name.localeCompare(right.name);
   });

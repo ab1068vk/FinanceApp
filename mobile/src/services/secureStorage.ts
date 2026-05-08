@@ -7,8 +7,8 @@ export type StoredUser = {
   full_name: string;
   avatar_color?: string;
   role: 'user' | 'admin';
-  is_active?: number;
-  must_change_password?: number;
+  is_active?: boolean;
+  must_change_password?: boolean;
   [key: string]: unknown;
 };
 

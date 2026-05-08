@@ -49,7 +49,7 @@ describe('Categories API', () => {
     expect(Array.isArray(response.body.data)).toBe(true);
     expect(response.body.data.length).toBeGreaterThan(0);
     expect(response.body.pagination).toEqual(expect.objectContaining({ page: 1, page_size: 50, total_count: expect.any(Number) }));
-    expect(response.body.data.some((item) => item.is_default === 1)).toBe(true);
+    expect(response.body.data.some((item) => item.is_default === true)).toBe(true);
   });
 
   test('does not return duplicate category names when a user copy matches a global default', async () => {
@@ -57,7 +57,7 @@ describe('Categories API', () => {
       .get('/api/categories')
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .expect(200);
-    const defaultCategory = defaults.body.data.find((item) => item.type === 'expense' && item.is_default === 1) || defaults.body.data[0];
+    const defaultCategory = defaults.body.data.find((item) => item.type === 'expense' && item.is_default === true) || defaults.body.data[0];
 
     db.prepare(`
       INSERT INTO categories (id, user_id, name, icon, color, type, is_default, is_system, is_active, sort_order, created_at)
@@ -93,9 +93,9 @@ describe('Categories API', () => {
       user_id: owner.user.id,
       name: 'Pet Supplies',
       type: 'expense',
-      is_default: 0,
-      is_system: 0,
-      is_active: 1,
+      is_default: false,
+      is_system: false,
+      is_active: true,
     }));
 
     const categories = await request(app)
@@ -107,7 +107,7 @@ describe('Categories API', () => {
         id: category.id,
         name: 'Pet Supplies',
         type: 'expense',
-        is_active: 1,
+        is_active: true,
       }),
     ]));
   });

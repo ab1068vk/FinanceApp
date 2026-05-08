@@ -1,6 +1,6 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { body, param, validationResult } = require('express-validator');
+const { body, param, query, validationResult } = require('express-validator');
 const authController = require('../controllers/authController');
 const { requireAuth } = require('../middleware/auth');
 
@@ -228,7 +228,9 @@ router.get('/notification-settings', requireAuth, authController.getNotification
 router.put('/notification-settings', requireAuth, [
   body('preferences').isObject().withMessage('preferences must be an object'),
 ], validate, authController.updateNotificationSettings);
-router.get('/notifications', requireAuth, authController.getNotifications);
+router.get('/notifications', requireAuth, [
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100').toInt(),
+], validate, authController.getNotifications);
 router.patch('/notifications/:id/read', requireAuth, [
   param('id').isUUID().withMessage('id must be a valid UUID'),
 ], validate, authController.markNotificationRead);

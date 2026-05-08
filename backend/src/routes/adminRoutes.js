@@ -88,6 +88,22 @@ const transactionFilters = [
   query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
   ...paging,
 ];
+const userTransactionFilters = [
+  // user_id query is intentionally not supported here; use path :id
+  query('account_id').optional().isUUID().withMessage('account_id must be a valid UUID'),
+  query('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),
+  query('type').optional().isIn(transactionTypes).withMessage(`type must be one of: ${transactionTypes.join(', ')}`),
+  query('start_date').optional().custom(isIsoDate).withMessage('start_date must be a valid ISO date'),
+  query('end_date').optional().custom(isIsoDate).withMessage('end_date must be a valid ISO date'),
+  query('date_from').optional().custom(isIsoDate).withMessage('date_from must be a valid ISO date'),
+  query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
+  decimalMoney(query('min_amount').optional(), 'min_amount'),
+  decimalMoney(query('max_amount').optional(), 'max_amount'),
+  query('include_deleted').optional().isBoolean().withMessage('include_deleted must be boolean'),
+  query('admin_deleted').optional().isBoolean().withMessage('admin_deleted must be boolean'),
+  query('search').optional().isString().isLength({ max: 100 }).withMessage('search must be up to 100 characters'),
+  ...paging,
+];
 const optionalUrl = (value) => value === '' || /^https?:\/\//i.test(String(value || ''));
 function isIpOrCidr(value) {
   const raw = String(value || '');
@@ -303,7 +319,7 @@ router.get('/audit-logs', [
   query('date_to').optional().custom(isIsoDate).withMessage('date_to must be a valid ISO date'),
   ...paging,
 ], validate, adminController.getAuditLogs);
-router.get('/users/:id/transactions', [idParam, ...transactionFilters], validate, adminController.getUserTransactions);
+router.get('/users/:id/transactions', [idParam, ...userTransactionFilters], validate, adminController.getUserTransactions);
 router.get('/system-health', adminController.getSystemHealth);
 
 module.exports = router;

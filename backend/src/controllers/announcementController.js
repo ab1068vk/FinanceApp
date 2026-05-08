@@ -1,5 +1,6 @@
 const { db } = require('../../database/db');
 const { pagination, paginationMeta } = require('../utils/pagination');
+const { serializeMoney } = require('../utils/money');
 
 function getActiveAnnouncements(req, res, next) {
   try {
@@ -29,7 +30,7 @@ function getActiveAnnouncements(req, res, next) {
       ORDER BY a.created_at DESC
       LIMIT ? OFFSET ?
     `).all(req.user.id, now, now, limit, offset);
-    return res.json({ data: rows, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(rows), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }

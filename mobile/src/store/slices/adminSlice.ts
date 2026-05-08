@@ -80,7 +80,7 @@ export type DeletedUser = {
   email: string;
   full_name: string;
   role?: 'user' | 'admin';
-  was_active?: number;
+  was_active?: boolean;
   created_at?: string | null;
   last_login?: string | null;
   deleted_at: string;

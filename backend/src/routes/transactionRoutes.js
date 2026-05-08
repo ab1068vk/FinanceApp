@@ -105,6 +105,7 @@ const bulkCategoryRules = [
 
 router.use(requireAuth);
 router.get('/', filters, validate, controller.getTransactions);
+// Creates always return { transactions: Transaction[] }, including one-item income/expense creates.
 router.post('/', createRules, validate, controller.createTransaction);
 router.get('/summary', filters, validate, controller.getTransactionSummary);
 router.delete('/bulk', bulkIdRules, validate, controller.bulkDeleteTransactions);

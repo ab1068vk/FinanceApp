@@ -392,6 +392,7 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_transactions_category_id ON transactions(category_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_txn_budget_lookup ON transactions(user_id, category_id, type, admin_deleted_at, date);
     CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
     CREATE INDEX IF NOT EXISTS idx_budgets_category_id ON budgets(category_id);
     CREATE INDEX IF NOT EXISTS idx_budgets_overlap ON budgets(user_id, category_id, start_date, end_date);
@@ -687,6 +688,7 @@ function ensureSchemaUpdates() {
     CREATE INDEX IF NOT EXISTS idx_transactions_admin_deleted ON transactions(admin_deleted_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_txn_budget_lookup ON transactions(user_id, category_id, type, admin_deleted_at, date);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
     CREATE INDEX IF NOT EXISTS idx_users_security_stamp ON users(security_stamp);

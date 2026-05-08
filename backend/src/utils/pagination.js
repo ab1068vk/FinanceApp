@@ -1,6 +1,7 @@
 function pagination(req, defaultPageSize = 50, maxPageSize = 200) {
   const page = Math.max(Number.parseInt(String(req.query.page || '1'), 10) || 1, 1);
-  const pageSize = Math.min(Math.max(Number.parseInt(String(req.query.limit || req.query.page_size || defaultPageSize), 10) || defaultPageSize, 1), maxPageSize);
+  const rawPageSize = Number.parseInt(String(req.query.limit || req.query.page_size || defaultPageSize), 10);
+  const pageSize = Math.min(Math.max(Number.isNaN(rawPageSize) ? defaultPageSize : rawPageSize, 1), maxPageSize);
   return {
     page,
     limit: pageSize,

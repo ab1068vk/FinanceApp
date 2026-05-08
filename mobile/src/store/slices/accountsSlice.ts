@@ -17,7 +17,7 @@ export type Account = {
   currency: string;
   color?: string;
   icon?: string;
-  is_active?: number;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string | null;
 };
@@ -100,7 +100,7 @@ export const createAccount = createAsyncThunk<Account, CreateAccountData, { reje
           id: tempId(),
           balance: data.balance || 0,
           current_balance: data.balance || 0,
-          is_active: 1,
+          is_active: true,
           created_at: new Date().toISOString(),
         };
       }

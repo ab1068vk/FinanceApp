@@ -38,6 +38,13 @@ function newSecurityStamp() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function budgetPercentUsed(amountValue, currentValue) {
+  const amount = Number(amountValue || 0);
+  const currentSpending = Number(currentValue || 0);
+  if (amount === 0) return currentSpending > 0 ? 100 : 0;
+  return Math.round((currentSpending / amount) * 10000) / 100;
+}
+
 function generateTemporaryPassword() {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   const numbers = '23456789';
@@ -1023,7 +1030,7 @@ function getUserBudgetPerformance(req, res, next) {
         return {
           ...budget,
           remaining: amount - current,
-          percent_used: amount > 0 ? (current / amount) * 100 : 0,
+          percent_used: budgetPercentUsed(amount, current),
           status: amount > 0 && current > amount ? 'over' : 'within',
         };
       }),
@@ -1387,7 +1394,7 @@ function listDefaultCategories(req, res, next) {
     const { page, limit, offset } = pagination(req);
     const total = db.prepare('SELECT COUNT(*) AS count FROM categories WHERE user_id IS NULL').get().count;
     const rows = db.prepare('SELECT * FROM categories WHERE user_id IS NULL ORDER BY type ASC, sort_order ASC, name ASC LIMIT ? OFFSET ?').all(limit, offset);
-    return res.json({ data: rows, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(rows), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1417,7 +1424,7 @@ function createDefaultCategory(req, res, next) {
       `).run(category);
       audit(req, 'ADMIN_CREATED_DEFAULT_CATEGORY', 'category', category.id, null, category);
     })();
-    return res.status(201).json(category);
+    return res.status(201).json(serializeMoney(category));
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Default category already exists' });
     return next(error);
@@ -1442,7 +1449,7 @@ function updateDefaultCategory(req, res, next) {
       const updated = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
       audit(req, 'ADMIN_UPDATED_DEFAULT_CATEGORY', 'category', req.params.id, oldCategory, updated);
     })();
-    return res.json(db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id));
+    return res.json(serializeMoney(db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id)));
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Default category already exists' });
     return next(error);
@@ -1706,10 +1713,12 @@ function exportReportCsv(req, res, next) {
           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense,
           COUNT(*) AS count
         FROM transactions WHERE admin_deleted_at IS NULL GROUP BY substr(date, 1, 7) ORDER BY month DESC
-      `).all();
+      `).all().map((row) => ({ ...row, net: Number(row.income || 0) - Number(row.expense || 0) }));
     void dataReq;
     const serializedRows = serializeMoney(rows);
-    const headers = Object.keys(serializedRows[0] || { empty: '' });
+    const headers = type === 'monthly'
+      ? ['month', 'income', 'expense', 'net', 'count']
+      : Object.keys(serializedRows[0] || { empty: '' });
     const csv = [headers.join(','), ...serializedRows.map((row) => headers.map((key) => JSON.stringify(row[key] ?? '')).join(','))].join('\n');
     audit(req, 'ADMIN_EXPORTED_REPORT_CSV', 'report', String(type), null, { rows: rows.length });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1725,7 +1734,7 @@ function listAnnouncements(req, res, next) {
     const { page, limit, offset } = pagination(req);
     const total = db.prepare('SELECT COUNT(*) AS count FROM announcements').get().count;
     const rows = db.prepare('SELECT * FROM announcements ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    return res.json({ data: rows, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(rows), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1754,7 +1763,7 @@ function createAnnouncement(req, res, next) {
       void sendPushNotification(user.id, row.title, row.body, { type: 'admin_announcement', announcementId: row.id })
         .catch((pushError) => logger.warn('Announcement push failed', { userId: user.id, error: pushError.message }));
     });
-    return res.status(201).json(row);
+    return res.status(201).json(serializeMoney(row));
   } catch (error) {
     return next(error);
   }
@@ -1774,7 +1783,7 @@ function updateAnnouncement(req, res, next) {
     db.prepare(`UPDATE announcements SET ${setSql} WHERE id = @id`).run({ ...updates, id: req.params.id });
     const row = db.prepare('SELECT * FROM announcements WHERE id = ?').get(req.params.id);
     audit(req, 'ADMIN_UPDATED_ANNOUNCEMENT', 'announcement', req.params.id, old, row);
-    return res.json(row);
+    return res.json(serializeMoney(row));
   } catch (error) {
     return next(error);
   }
@@ -1801,7 +1810,7 @@ function listApiTokens(req, res, next) {
     const { page, limit, offset } = pagination(req);
     const total = db.prepare('SELECT COUNT(*) AS count FROM admin_api_tokens').get().count;
     const rows = db.prepare('SELECT id, name, scopes, is_active, last_used_at, created_at, revoked_at, created_by FROM admin_api_tokens ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    return res.json({ data: rows.map((row) => ({ ...row, scopes: JSON.parse(row.scopes || '[]') })), pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(rows.map((row) => ({ ...row, scopes: JSON.parse(row.scopes || '[]') }))), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1866,7 +1875,7 @@ function listWebhooks(req, res, next) {
       SELECT w.*, (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id) AS delivery_count
       FROM webhooks w ORDER BY w.created_at DESC LIMIT ? OFFSET ?
     `).all(limit, offset);
-    return res.json({ data: rows.map((row) => ({ ...row, secret: row.secret ? '[configured]' : null })), pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(rows.map((row) => ({ ...row, secret: row.secret ? '[configured]' : null }))), pagination: paginationMeta(page, limit, total) });
   } catch (error) {
     return next(error);
   }
@@ -1890,7 +1899,7 @@ function createWebhook(req, res, next) {
       VALUES (@id, @name, @url, @event, @is_active, @secret, @created_at, @updated_at, @created_by)
     `).run(row);
     audit(req, 'ADMIN_CREATED_WEBHOOK', 'webhook', row.id, null, { ...row, secret: '[redacted]' });
-    return res.status(201).json({ ...row, secret: '[configured]' });
+    return res.status(201).json(serializeMoney({ ...row, secret: '[configured]' }));
   } catch (error) {
     return next(error);
   }
@@ -1916,7 +1925,7 @@ function updateWebhook(req, res, next) {
     db.prepare(`UPDATE webhooks SET ${setSql} WHERE id = @id`).run({ ...updates, id: req.params.id });
     const row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
     audit(req, 'ADMIN_UPDATED_WEBHOOK', 'webhook', req.params.id, { ...old, secret: '[redacted]' }, { ...row, secret: '[redacted]' });
-    return res.json({ ...row, secret: row.secret ? '[configured]' : null });
+    return res.json(serializeMoney({ ...row, secret: row.secret ? '[configured]' : null }));
   } catch (error) {
     return next(error);
   }

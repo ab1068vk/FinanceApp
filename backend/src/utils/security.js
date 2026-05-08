@@ -94,6 +94,11 @@ function sanitizeUser(user) {
 
   const safeUser = { ...user };
   delete safeUser.password_hash;
+  delete safeUser.security_stamp;
+  for (const key of ['is_active', 'must_change_password', 'has_completed_onboarding', 'email_verified']) {
+    if (safeUser[key] === 1) safeUser[key] = true;
+    if (safeUser[key] === 0) safeUser[key] = false;
+  }
   return safeUser;
 }
 

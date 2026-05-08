@@ -27,7 +27,7 @@ import { useTheme } from '../../theme';
 
 type Props = StackScreenProps<AdminStackParamList, 'UserDetail'>;
 type ActionType = 'status' | 'role' | 'password' | 'transactions' | 'accounts' | 'deleteAccount' | 'delete' | null;
-type AdminAccount = { id: string; name: string; type: string; balance: number; currency: string; is_active: number; transaction_count?: number };
+type AdminAccount = { id: string; name: string; type: string; balance: number; currency: string; is_active: boolean; transaction_count?: number };
 type SupportTokenResult = { accessToken: string; expires_in: string; warning?: string; user?: { email?: string; full_name?: string } };
 type AccountTransactionAction = 'cash' | 'delete';
 

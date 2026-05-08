@@ -823,7 +823,18 @@ function getNotifications(req, res, next) {
       ORDER BY created_at DESC
       LIMIT ?
     `).all(req.user.id, limit);
-    return res.json({ data: rows });
+    return res.json({
+      data: rows.map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        type: row.type,
+        title: row.title,
+        body: row.body,
+        data: row.data_json ? (() => { try { return JSON.parse(row.data_json); } catch { return null; } })() : null,
+        read_at: row.read_at,
+        created_at: row.created_at,
+      })),
+    });
   } catch (error) {
     return next(error);
   }

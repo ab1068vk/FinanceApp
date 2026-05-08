@@ -13,9 +13,9 @@ type DefaultCategory = {
   type: 'income' | 'expense';
   icon?: string | null;
   color?: string | null;
-  is_default: number;
-  is_system: number;
-  is_active: number;
+  is_default: boolean;
+  is_system: boolean;
+  is_active: boolean;
   sort_order: number;
 };
 

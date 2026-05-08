@@ -89,6 +89,13 @@ function assertNoBudgetOverlap(userId, categoryId, startDate, endDate, excludeId
   }
 }
 
+function budgetPercentUsed(amountValue, currentValue) {
+  const amount = Number(amountValue || 0);
+  const currentSpending = Number(currentValue || 0);
+  if (amount === 0) return currentSpending > 0 ? 100 : 0;
+  return Math.round((currentSpending / amount) * 10000) / 100;
+}
+
 function createBudget(req, res, next) {
   try {
     if (!allowedCategory(req.body.category_id, req.user.id)) return res.status(400).json({ error: 'category_id is invalid' });
@@ -111,17 +118,22 @@ function getBudgets(req, res, next) {
     const { page, limit, offset } = pagination(req);
     const total = db.prepare('SELECT COUNT(*) AS count FROM budgets WHERE user_id = ?').get(req.user.id).count;
     const budgets = db.prepare(`SELECT b.*, c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-      COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = b.user_id AND t.category_id = b.category_id
-        AND t.type = 'expense' AND t.admin_deleted_at IS NULL AND datetime(t.date) >= datetime(b.start_date)
-        AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date, '+1 day', '-1 second'))), 0) AS current_spending
-      FROM budgets b LEFT JOIN categories c ON c.id = b.category_id
-      WHERE b.user_id = ? ORDER BY b.created_at DESC LIMIT ? OFFSET ?`).all(req.user.id, limit, offset);
+      COALESCE(SUM(t.amount), 0) AS current_spending
+      FROM budgets b
+      LEFT JOIN categories c ON c.id = b.category_id
+      LEFT JOIN transactions t ON t.user_id = b.user_id
+        AND t.category_id = b.category_id
+        AND t.type = 'expense'
+        AND t.admin_deleted_at IS NULL
+        AND datetime(t.date) >= datetime(b.start_date)
+        AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date, '+1 day', '-1 second'))
+      WHERE b.user_id = ?
+      GROUP BY b.id
+      ORDER BY b.created_at DESC LIMIT ? OFFSET ?`).all(req.user.id, limit, offset);
     const data = budgets.map((budget) => ({
       ...budget,
       remaining: Number(budget.amount) - Number(budget.current_spending),
-      percent_used: Number(budget.amount) > 0
-        ? (Number(budget.current_spending) / Number(budget.amount)) * 100
-        : 0,
+      percent_used: budgetPercentUsed(budget.amount, budget.current_spending),
     }));
     return res.json({ data: serializeMoney(data), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
@@ -149,7 +161,7 @@ function getBudget(req, res, next) {
       ...budget,
       current_spending: current,
       remaining: Number(budget.amount) - current,
-      percent_used: Number(budget.amount) > 0 ? (current / Number(budget.amount)) * 100 : 0,
+      percent_used: budgetPercentUsed(budget.amount, current),
       weekly_breakdown: breakdown,
     }));
   } catch (error) { return next(error); }

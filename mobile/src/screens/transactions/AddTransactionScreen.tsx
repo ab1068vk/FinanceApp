@@ -27,7 +27,7 @@ import { featherIconName } from '../../utils/icons';
 import { ListPayload, unwrapList } from '../../types/api';
 
 type Props = StackScreenProps<TransactionsStackParamList, 'AddTransaction'>;
-type Category = { id: string; name: string; icon?: string; color?: string; type?: 'income' | 'expense'; is_default?: number; sort_order?: number };
+type Category = { id: string; name: string; icon?: string; color?: string; type?: 'income' | 'expense'; is_default?: boolean; sort_order?: number };
 type Interval = 'daily' | 'weekly' | 'monthly' | 'yearly';
 type CategoryUsage = { count: number; lastUsed: number };
 
@@ -130,7 +130,7 @@ export default function AddTransactionScreen({ navigation, route }: Props) {
     .sort((left, right) => {
       const typeDiff = categoryTypeRank(left) - categoryTypeRank(right);
       if (typeDiff) return typeDiff;
-      const customDiff = (left.is_default || 0) - (right.is_default || 0);
+      const customDiff = Number(left.is_default || false) - Number(right.is_default || false);
       if (customDiff) return customDiff;
       const leftUsage = categoryUsage.get(left.id) || { count: 0, lastUsed: 0 };
       const rightUsage = categoryUsage.get(right.id) || { count: 0, lastUsed: 0 };

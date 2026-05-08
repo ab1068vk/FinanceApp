@@ -21,6 +21,17 @@ const MONEY_RESPONSE_KEYS = new Set([
   'transaction_total',
 ]);
 
+const BOOLEAN_RESPONSE_KEYS = new Set([
+  'is_active',
+  'recurring',
+  'must_change_password',
+  'has_completed_onboarding',
+  'is_default',
+  'is_system',
+  'email_verified',
+  'was_active',
+]);
+
 function amountToCents(value, { allowZero = true } = {}) {
   const raw = typeof value === 'string' ? value.trim() : value;
   const amount = Number(raw);
@@ -45,7 +56,7 @@ function centsToAmount(value) {
   if (value === null || value === undefined) return value;
   const cents = Number(value);
   if (!Number.isFinite(cents)) return value;
-  return Math.round(cents) / 100;
+  return parseFloat((Math.round(cents) / 100).toFixed(2));
 }
 
 function computeBalanceDelta(transaction) {
@@ -65,6 +76,17 @@ function serializeMoney(value, key = '') {
   return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => {
     if (MONEY_RESPONSE_KEYS.has(childKey) && typeof childValue === 'number') {
       return [childKey, centsToAmount(childValue)];
+    }
+    if (BOOLEAN_RESPONSE_KEYS.has(childKey)) {
+      if (childValue === 1) return [childKey, true];
+      if (childValue === 0) return [childKey, false];
+    }
+    if (childKey === 'tags' && typeof childValue === 'string') {
+      try {
+        return [childKey, JSON.parse(childValue)];
+      } catch {
+        return [childKey, []];
+      }
     }
     return [childKey, serializeMoney(childValue, childKey)];
   }));

@@ -23,6 +23,11 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
 
 const balanceExpr = accountCurrentBalanceExpr('accounts');
 
+function normalizeOverdraftLimit(value) {
+  if (value === null || value === '' || value === false) return null;
+  return Math.max(amountToCents(value), 0);
+}
+
 function updateStoredBalance(accountId, userId, delta) {
   if (!db.inTransaction) {
     logger.warn('Account balance updated outside transaction', { accountId, userId, delta });
@@ -91,8 +96,8 @@ function createAccount(req, res, next) {
   try {
     const initialBalance = amountToCents(req.body.balance || 0);
     const hasOverdraftLimit = Object.prototype.hasOwnProperty.call(req.body, 'overdraft_limit');
-    const overdraftLimit = hasOverdraftLimit ? Math.max(amountToCents(req.body.overdraft_limit || 0), 0) : null;
-    if (hasOverdraftLimit && NON_NEGATIVE_ACCOUNT_TYPES.has(req.body.type) && initialBalance < -overdraftLimit) {
+    const overdraftLimit = hasOverdraftLimit ? normalizeOverdraftLimit(req.body.overdraft_limit) : null;
+    if (overdraftLimit !== null && NON_NEGATIVE_ACCOUNT_TYPES.has(req.body.type) && initialBalance < -overdraftLimit) {
       return res.status(400).json({ error: 'Opening balance exceeds the overdraft limit for this account type' });
     }
     const createdAt = nowIso();
@@ -169,22 +174,13 @@ function updateAccount(req, res, next) {
     for (const field of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         if (field === 'currency') updates[field] = req.body[field].toUpperCase();
-        else if (field === 'overdraft_limit') updates[field] = Math.max(amountToCents(req.body[field] || 0), 0);
+        else if (field === 'overdraft_limit') updates[field] = normalizeOverdraftLimit(req.body[field]);
         else updates[field] = req.body[field];
       }
     }
-    if (Object.prototype.hasOwnProperty.call(updates, 'balance')
-      && oldAccount.overdraft_limit !== null
-      && oldAccount.overdraft_limit !== undefined
-      && NON_NEGATIVE_ACCOUNT_TYPES.has(oldAccount.type)
-      && updates.balance < -Math.max(Number(oldAccount.overdraft_limit || 0), 0)) {
-      return res.status(400).json({ error: 'Balance exceeds the overdraft limit for this account type' });
-    }
-    if (Object.prototype.hasOwnProperty.call(updates, 'overdraft_limit') && NON_NEGATIVE_ACCOUNT_TYPES.has(oldAccount.type)) {
+    if (Object.prototype.hasOwnProperty.call(updates, 'overdraft_limit') && updates.overdraft_limit !== null && NON_NEGATIVE_ACCOUNT_TYPES.has(oldAccount.type)) {
       const current = db.prepare(`SELECT ${balanceExpr} AS current_balance FROM accounts WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
-      const balanceToValidate = Object.prototype.hasOwnProperty.call(updates, 'balance')
-        ? updates.balance
-        : Number(current?.current_balance || 0);
+      const balanceToValidate = Number(current?.current_balance || 0);
       if (balanceToValidate < -updates.overdraft_limit) {
         return res.status(400).json({ error: 'Current balance exceeds the requested overdraft limit' });
       }

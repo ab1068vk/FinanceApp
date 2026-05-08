@@ -239,7 +239,7 @@ function createTransaction(req, res, next) {
         { type: 'large_transaction', transactionId: created[0]?.id }
       ).catch((pushError) => logger.warn('Large transaction push failed', { userId: req.user.id, error: pushError.message }));
     }
-    return res.status(201).json(serializeMoney(base.type === 'transfer' ? { transactions: hydrated } : hydrated[0]));
+    return res.status(201).json(serializeMoney({ transactions: hydrated }));
   } catch (error) { return next(error); }
 }
 

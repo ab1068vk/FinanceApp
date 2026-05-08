@@ -85,8 +85,9 @@ describe('money roundtrips', () => {
       })
       .expect(201);
 
-    expect(transaction.body.amount).toBe(50);
-    expect(db.prepare('SELECT amount FROM transactions WHERE id = ?').get(transaction.body.id).amount).toBe(5000);
+    const createdTransaction = transaction.body.transactions[0];
+    expect(createdTransaction.amount).toBe(50);
+    expect(db.prepare('SELECT amount FROM transactions WHERE id = ?').get(createdTransaction.id).amount).toBe(5000);
 
     const accountRow = db.prepare('SELECT balance FROM accounts WHERE id = ?').get(account.body.id);
     expect(accountRow.balance).toBe(15000);
@@ -100,7 +101,7 @@ describe('money roundtrips', () => {
     expect(fetchedAccount.body.current_balance).toBe(150);
 
     const fetchedTransaction = await request(app)
-      .get(`/api/transactions/${transaction.body.id}`)
+      .get(`/api/transactions/${createdTransaction.id}`)
       .set('Authorization', `Bearer ${session.accessToken}`)
       .expect(200);
     expect(fetchedTransaction.body.amount).toBe(50);

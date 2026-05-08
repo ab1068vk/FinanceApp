@@ -51,6 +51,10 @@ async function getExpenseCategory(accessToken) {
   return response.body.data.find((category) => category.type === 'expense') || response.body.data[0];
 }
 
+function createdTransaction(body) {
+  return body.transactions[0];
+}
+
 afterAll(() => {
   db.close();
   for (const suffix of ['', '-wal', '-shm']) {
@@ -330,7 +334,7 @@ describe('Admin API', () => {
       .send({ is_active: false })
       .expect(200);
 
-    expect(statusResponse.body.is_active).toBe(0);
+    expect(statusResponse.body.is_active).toBe(false);
     expect(db.prepare('SELECT COUNT(*) AS count FROM refresh_tokens WHERE user_id = ? AND revoked = 0').get(managedUser.user.id).count).toBe(0);
     expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND entity_id = ?').get('ADMIN_UPDATED_USER_STATUS', managedUser.user.id).count).toBeGreaterThan(0);
   });
@@ -356,7 +360,7 @@ describe('Admin API', () => {
       .send({ email: target.credentials.email, password: 'TempPass1!' })
       .expect(200);
 
-    expect(login.body.user.must_change_password).toBe(1);
+    expect(login.body.user.must_change_password).toBe(true);
 
     await request(app)
       .get('/api/accounts')
@@ -459,12 +463,13 @@ describe('Admin API', () => {
         date: new Date().toISOString(),
       })
       .expect(201);
+    const createdTx = createdTransaction(created.body);
 
     const globalList = await request(app)
       .get(`/api/admin/transactions?search=${encodeURIComponent(target.credentials.email)}&limit=10`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
-    expect(globalList.body.data.some((tx) => tx.id === created.body.id && tx.user_email === target.credentials.email)).toBe(true);
+    expect(globalList.body.data.some((tx) => tx.id === createdTx.id && tx.user_email === target.credentials.email)).toBe(true);
 
     const transactionPage = await request(app)
       .get('/api/admin/transactions?page=1&page_size=1')
@@ -486,10 +491,10 @@ describe('Admin API', () => {
       .expect(400);
 
     const detail = await request(app)
-      .get(`/api/admin/transactions/${created.body.id}`)
+      .get(`/api/admin/transactions/${createdTx.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
-    expect(detail.body).toEqual(expect.objectContaining({ id: created.body.id, user_email: target.credentials.email }));
+    expect(detail.body).toEqual(expect.objectContaining({ id: createdTx.id, user_email: target.credentials.email }));
 
     const accounts = await request(app)
       .get(`/api/admin/users/${target.user.id}/accounts`)
@@ -510,7 +515,7 @@ describe('Admin API', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ is_active: false, reason: 'Support close request' })
       .expect(200);
-    expect(closed.body.is_active).toBe(0);
+    expect(closed.body.is_active).toBe(false);
 
     const accountToDelete = await createAccount(target.accessToken);
     const movedTransaction = await request(app)
@@ -525,6 +530,7 @@ describe('Admin API', () => {
         date: new Date().toISOString(),
       })
       .expect(201);
+    const movedTx = createdTransaction(movedTransaction.body);
 
     const deletedAccount = await request(app)
       .delete(`/api/admin/users/${target.user.id}/accounts/${accountToDelete.id}`)
@@ -533,7 +539,7 @@ describe('Admin API', () => {
       .expect(200);
     expect(deletedAccount.body.transactions).toEqual(expect.objectContaining({ action: 'cash', moved: 1 }));
     expect(db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE id = ?').get(accountToDelete.id).count).toBe(0);
-    expect(db.prepare('SELECT account_id FROM transactions WHERE id = ?').get(movedTransaction.body.id).account_id).not.toBe(accountToDelete.id);
+    expect(db.prepare('SELECT account_id FROM transactions WHERE id = ?').get(movedTx.id).account_id).not.toBe(accountToDelete.id);
     expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND entity_id = ?').get('ADMIN_DELETED_USER_ACCOUNT', accountToDelete.id).count).toBe(1);
     const accountDeleteNotification = await request(app)
       .get('/api/auth/notifications')
@@ -560,6 +566,7 @@ describe('Admin API', () => {
         date: new Date().toISOString(),
       })
       .expect(201);
+    const deletedTx = createdTransaction(deletedTransaction.body);
     const deletedAccountWithTransactions = await request(app)
       .delete(`/api/admin/users/${target.user.id}/accounts/${accountToDeleteWithTransactions.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
@@ -567,16 +574,16 @@ describe('Admin API', () => {
       .expect(200);
     expect(deletedAccountWithTransactions.body.transactions).toEqual(expect.objectContaining({ action: 'delete', deleted: 1 }));
     expect(db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE id = ?').get(accountToDeleteWithTransactions.id).count).toBe(0);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE id = ?').get(deletedTransaction.body.id).count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE id = ?').get(deletedTx.id).count).toBe(0);
 
     await request(app)
-      .delete(`/api/admin/transactions/${created.body.id}`)
+      .delete(`/api/admin/transactions/${createdTx.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ reason: 'Fraud review duplicate' })
       .expect(200);
 
     const hiddenFromUser = await request(app)
-      .get(`/api/transactions/${created.body.id}`)
+      .get(`/api/transactions/${createdTx.id}`)
       .set('Authorization', `Bearer ${target.accessToken}`)
       .expect(404);
     expect(hiddenFromUser.body.error).toBe('Transaction not found');
@@ -585,13 +592,13 @@ describe('Admin API', () => {
       .get(`/api/admin/transactions?include_deleted=true&search=${encodeURIComponent('Global admin transaction')}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
-    expect(includeDeleted.body.data.some((tx) => tx.id === created.body.id && tx.admin_delete_reason === 'Fraud review duplicate')).toBe(true);
+    expect(includeDeleted.body.data.some((tx) => tx.id === createdTx.id && tx.admin_delete_reason === 'Fraud review duplicate')).toBe(true);
 
     const adminDeleted = await request(app)
       .get('/api/admin/transactions?admin_deleted=true')
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
-    expect(adminDeleted.body.data.some((tx) => tx.id === created.body.id)).toBe(true);
+    expect(adminDeleted.body.data.some((tx) => tx.id === createdTx.id)).toBe(true);
   });
 
   test('admin date-only range filters include the full selected day', async () => {
@@ -611,6 +618,7 @@ describe('Admin API', () => {
         date: '2026-05-06T18:30:00.000Z',
       })
       .expect(201);
+    const insideTx = createdTransaction(inside.body);
 
     const outside = await request(app)
       .post('/api/transactions')
@@ -624,22 +632,23 @@ describe('Admin API', () => {
         date: '2026-05-07T01:30:00.000Z',
       })
       .expect(201);
+    const outsideTx = createdTransaction(outside.body);
 
     const global = await request(app)
       .get('/api/admin/transactions?start_date=2026-05-06&end_date=2026-05-06&limit=20')
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
 
-    expect(global.body.data.some((tx) => tx.id === inside.body.id)).toBe(true);
-    expect(global.body.data.some((tx) => tx.id === outside.body.id)).toBe(false);
+    expect(global.body.data.some((tx) => tx.id === insideTx.id)).toBe(true);
+    expect(global.body.data.some((tx) => tx.id === outsideTx.id)).toBe(false);
 
     const userTransactions = await request(app)
       .get(`/api/admin/users/${target.user.id}/transactions?start_date=2026-05-06&end_date=2026-05-06&limit=20`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
 
-    expect(userTransactions.body.data.map((tx) => tx.id)).toContain(inside.body.id);
-    expect(userTransactions.body.data.map((tx) => tx.id)).not.toContain(outside.body.id);
+    expect(userTransactions.body.data.map((tx) => tx.id)).toContain(insideTx.id);
+    expect(userTransactions.body.data.map((tx) => tx.id)).not.toContain(outsideTx.id);
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, old_value, new_value, ip_address, user_agent, created_at)
@@ -689,14 +698,14 @@ describe('Admin API', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ name: `Compliance ${Date.now()}`, type: 'expense', icon: 'file-text', color: '#123456', is_system: true })
       .expect(201);
-    expect(category.body.is_system).toBe(1);
+    expect(category.body.is_system).toBe(true);
 
     const updatedCategory = await request(app)
       .put(`/api/admin/default-categories/${category.body.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ sort_order: 5, is_active: false })
       .expect(200);
-    expect(updatedCategory.body.is_active).toBe(0);
+    expect(updatedCategory.body.is_active).toBe(false);
     const deletedCategory = await request(app)
       .delete(`/api/admin/default-categories/${category.body.id}`)
       .set('Authorization', `Bearer ${admin.accessToken}`)

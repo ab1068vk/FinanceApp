@@ -16,7 +16,7 @@ export type Transaction = {
   description?: string | null;
   note?: string | null;
   date: string;
-  recurring?: number;
+  recurring?: boolean;
   recurring_interval?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
   receipt_path?: string | null;
   tags?: string | string[] | null;
@@ -174,12 +174,8 @@ export const createTransaction = createAsyncThunk<Transaction | Transaction[], C
   'transactions/createTransaction',
   async (data, { rejectWithValue }) => {
     try {
-      const response = await api.post<Transaction | { transactions: Transaction[] }>('/api/transactions', data);
-      const payload = response.data as Transaction | { transactions: Transaction[] };
-      if ('transactions' in payload && Array.isArray(payload.transactions)) {
-        return payload.transactions;
-      }
-      return payload as Transaction;
+      const response = await api.post<{ transactions: Transaction[] }>('/api/transactions', data);
+      return response.data.transactions;
     } catch (error) {
       if (isNetworkError(error)) {
         await enqueue({ method: 'POST', url: '/api/transactions', data, description: 'Create transaction' });
@@ -189,7 +185,7 @@ export const createTransaction = createAsyncThunk<Transaction | Transaction[], C
           id: tempId(),
           category_id: data.category_id || '',
           date: data.date,
-          recurring: data.recurring ? 1 : 0,
+          recurring: Boolean(data.recurring),
           created_at: new Date().toISOString(),
         };
       }

@@ -3,6 +3,7 @@ const { db } = require('../../database/db');
 const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { pagination, paginationMeta } = require('../utils/pagination');
+const { serializeMoney } = require('../utils/money');
 
 function nowIso() { return new Date().toISOString(); }
 function audit(req, action, entityType, entityId, oldValue = null, newValue = null) {
@@ -58,7 +59,7 @@ function getCategories(req, res, next) {
     });
     const total = categories.length;
     const data = categories.slice(offset, offset + limit);
-    return res.json({ data, pagination: paginationMeta(page, limit, total) });
+    return res.json({ data: serializeMoney(data), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
 }
 
@@ -75,7 +76,7 @@ function createCategory(req, res, next) {
     db.prepare(`INSERT INTO categories (id, user_id, name, icon, color, type, is_default, is_system, is_active, sort_order, created_at)
       VALUES (@id, @user_id, @name, @icon, @color, @type, @is_default, @is_system, @is_active, @sort_order, @created_at)`).run(category);
     audit(req, 'CATEGORY_CREATED', 'category', category.id, null, category);
-    return res.status(201).json(category);
+    return res.status(201).json(serializeMoney(category));
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Category already exists' });
     return next(error);
@@ -97,7 +98,7 @@ function updateCategory(req, res, next) {
     db.prepare(`UPDATE categories SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
     const newCategory = db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
     audit(req, 'CATEGORY_UPDATED', 'category', req.params.id, oldCategory, newCategory);
-    return res.json(newCategory);
+    return res.json(serializeMoney(newCategory));
   } catch (error) { return next(error); }
 }
 
@@ -107,7 +108,7 @@ function reorderCategories(req, res, next) {
     let rows;
     let categories;
     db.transaction(() => {
-      rows = db.prepare('SELECT id, name, icon, color, type, is_default, sort_order, created_at FROM categories WHERE user_id = ? AND id IN (' + ids.map(() => '?').join(',') + ')').all(req.user.id, ...ids);
+      rows = db.prepare('SELECT * FROM categories WHERE user_id = ? AND id IN (' + ids.map(() => '?').join(',') + ')').all(req.user.id, ...ids);
       if (rows.length !== ids.length) throw Object.assign(new Error('Only owned custom categories can be reordered'), { statusCode: 400 });
       const byId = new Map(rows.map((row) => [row.id, row]));
       const update = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ? AND user_id = ?');
@@ -115,7 +116,7 @@ function reorderCategories(req, res, next) {
       categories = ids.map((id, index) => ({ ...byId.get(id), sort_order: (index + 1) * 10 }));
       audit(req, 'CATEGORY_REORDERED', 'category', req.user.id, rows, categories);
     })();
-    return res.json(categories);
+    return res.json(serializeMoney(categories));
   } catch (error) { return next(error); }
 }
 

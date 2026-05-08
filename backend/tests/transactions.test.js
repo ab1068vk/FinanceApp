@@ -42,6 +42,10 @@ async function getDifferentCategory(accessToken, categoryId) {
   return response.body.data.find((category) => category.id !== categoryId) || response.body.data[0];
 }
 
+function createdTransaction(body) {
+  return body.transactions[0];
+}
+
 afterAll(() => {
   db.close();
   for (const suffix of ['', '-wal', '-shm']) {
@@ -77,7 +81,7 @@ describe('Transactions API', () => {
       })
       .expect(201);
 
-    transaction = response.body;
+    transaction = createdTransaction(response.body);
     expect(transaction.id).toEqual(expect.any(String));
     expect(transaction.user_id).toBe(userOne.user.id);
     expect(transaction.category_id).toBe(category.id);
@@ -105,7 +109,8 @@ describe('Transactions API', () => {
       })
       .expect(201);
 
-    expect(created.body).toEqual(expect.objectContaining({
+    const createdTx = createdTransaction(created.body);
+    expect(createdTx).toEqual(expect.objectContaining({
       category_id: customCategory.body.id,
       category_name: 'Car Repairs',
       account_name: account.name,
@@ -118,7 +123,7 @@ describe('Transactions API', () => {
 
     expect(listed.body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: created.body.id,
+        id: createdTx.id,
         category_name: 'Car Repairs',
       }),
     ]));
@@ -137,10 +142,11 @@ describe('Transactions API', () => {
       })
       .expect(201);
 
-    expect(response.body.account_id).toEqual(expect.any(String));
+    const tx = createdTransaction(response.body);
+    expect(tx.account_id).toEqual(expect.any(String));
 
     const account = await request(app)
-      .get(`/api/accounts/${response.body.account_id}`)
+      .get(`/api/accounts/${tx.account_id}`)
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .expect(200);
 
@@ -171,7 +177,7 @@ describe('Transactions API', () => {
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .send({ ...basePayload, amount: 10.99 })
       .expect(201);
-    expect(Number(accepted.body.amount)).toBeCloseTo(10.99);
+    expect(Number(createdTransaction(accepted.body).amount)).toBeCloseTo(10.99);
 
     await request(app)
       .post('/api/transactions')
@@ -251,20 +257,21 @@ describe('Transactions API', () => {
       .get('/api/transactions?search=project%20alpha')
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .expect(200);
-    expect(byNote.body.data.some((item) => item.id === response.body.id)).toBe(true);
+    const tx = createdTransaction(response.body);
+    expect(byNote.body.data.some((item) => item.id === tx.id)).toBe(true);
 
     const byTag = await request(app)
       .get('/api/transactions?search=alpha-tag')
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .expect(200);
-    expect(byTag.body.data.some((item) => item.id === response.body.id)).toBe(true);
+    expect(byTag.body.data.some((item) => item.id === tx.id)).toBe(true);
 
     const byRawTag = await request(app)
       .get(`/api/transactions?search=${encodeURIComponent('<supermarket>')}`)
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .expect(200);
-    expect(byRawTag.body.data.some((item) => item.id === response.body.id)).toBe(true);
-    expect(JSON.parse(response.body.tags)).toContain('<supermarket>');
+    expect(byRawTag.body.data.some((item) => item.id === tx.id)).toBe(true);
+    expect(tx.tags).toContain('<supermarket>');
   });
 
   test('preserves transaction text fields as user-authored API data', async () => {
@@ -284,9 +291,10 @@ describe('Transactions API', () => {
       })
       .expect(201);
 
-    expect(response.body.description).toBe('5 < 10 on groceries');
-    expect(response.body.note).toBe('Use "household" / shared budget');
-    expect(JSON.parse(response.body.tags)).toEqual(['<b>urgent</b>']);
+    const tx = createdTransaction(response.body);
+    expect(tx.description).toBe('5 < 10 on groceries');
+    expect(tx.note).toBe('Use "household" / shared budget');
+    expect(tx.tags).toEqual(['<b>urgent</b>']);
   });
 
   test('blocks detected attack payloads before transaction storage', async () => {
@@ -320,9 +328,10 @@ describe('Transactions API', () => {
       })
       .expect(201);
 
-    expect(response.body.description).toBe('5 < 10 on groceries');
-    expect(response.body.note).toBeNull();
-    expect(JSON.parse(response.body.tags)).toEqual(['needs review']);
+    const tx = createdTransaction(response.body);
+    expect(tx.description).toBe('5 < 10 on groceries');
+    expect(tx.note).toBeNull();
+    expect(tx.tags).toEqual(['needs review']);
   });
 
   test('user cannot access another user transaction', async () => {
@@ -432,11 +441,11 @@ describe('Transactions API', () => {
     await request(app)
       .patch('/api/transactions/bulk/category')
       .set('Authorization', `Bearer ${userOne.accessToken}`)
-      .send({ transaction_ids: [response.body.id], category_id: secondCategory.id })
+      .send({ transaction_ids: [createdTransaction(response.body).id], category_id: secondCategory.id })
       .expect(200);
 
     const updated = await request(app)
-      .get(`/api/transactions/${response.body.id}`)
+      .get(`/api/transactions/${createdTransaction(response.body).id}`)
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .expect(200);
     expect(updated.body.category_id).toBe(secondCategory.id);
@@ -458,7 +467,7 @@ describe('Transactions API', () => {
       .expect(201);
 
     const updated = await request(app)
-      .put(`/api/transactions/${response.body.id}`)
+      .put(`/api/transactions/${createdTransaction(response.body).id}`)
       .set('Authorization', `Bearer ${userOne.accessToken}`)
       .send({ amount: 12.5, description: 'Amount after edit' })
       .expect(200);
@@ -541,7 +550,7 @@ describe('Transactions API', () => {
     await request(app)
       .delete('/api/transactions/bulk')
       .set('Authorization', `Bearer ${userOne.accessToken}`)
-      .send({ transaction_ids: [response.body.id] })
+      .send({ transaction_ids: [createdTransaction(response.body).id] })
       .expect(200);
 
     const after = await request(app)

@@ -16,7 +16,7 @@ export type ServerNotificationSource = {
   type: string;
   title: string;
   body: string;
-  data_json?: string | null;
+  data?: Record<string, unknown> | null;
   read_at?: string | null;
   created_at: string;
 };
@@ -167,12 +167,9 @@ function announcementNotifications(announcements: AnnouncementNotificationSource
 function serverNotifications(notifications: ServerNotificationSource[]): AppNotification[] {
   return notifications.map((notification) => {
     let detail = 'Account notice';
-    try {
-      const data = notification.data_json ? JSON.parse(notification.data_json) : null;
-      if (data?.reason) detail = `Reason: ${data.reason}`;
-    } catch {
-      detail = notification.type;
-    }
+    const data = notification.data || null;
+    if (typeof data?.reason === 'string') detail = `Reason: ${data.reason}`;
+    else detail = notification.type;
 
     return {
       id: `server-${notification.id}`,

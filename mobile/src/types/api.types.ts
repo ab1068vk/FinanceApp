@@ -9,12 +9,12 @@ export interface User {
   email: string;
   full_name: string;
   role: UserRole;
-  is_active: number;
+  is_active: boolean;
   email_verified_at?: string | null;
   avatar_color?: string | null;
   currency?: string;
-  must_change_password?: number;
-  has_completed_onboarding?: number;
+  must_change_password?: boolean;
+  has_completed_onboarding?: boolean;
   last_login?: string | null;
   failed_login_attempts?: number;
   locked_until?: string | null;
@@ -33,7 +33,7 @@ export interface Account {
   currency: string;
   color?: string | null;
   icon?: string | null;
-  is_active?: number;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string | null;
 }
@@ -50,10 +50,10 @@ export interface Transaction {
   description?: string | null;
   note?: string | null;
   date: string;
-  recurring?: number;
+  recurring?: boolean;
   recurring_interval?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
   receipt_path?: string | null;
-  tags?: string | string[] | null;
+  tags?: string[] | null;
   transfer_group_id?: string | null;
   transfer_direction?: 'source' | 'destination' | null;
   account_name?: string | null;
@@ -93,9 +93,9 @@ export interface Category {
   icon?: string | null;
   color?: string | null;
   sort_order?: number;
-  is_default?: number;
-  is_system?: number;
-  is_active?: number;
+  is_default?: boolean;
+  is_system?: boolean;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string | null;
 }
@@ -104,7 +104,7 @@ export interface Announcement {
   id: string;
   title: string;
   body: string;
-  is_active?: number;
+  is_active?: boolean;
   starts_at?: string | null;
   ends_at?: string | null;
   created_at?: string;
@@ -112,7 +112,7 @@ export interface Announcement {
 }
 
 export interface RecurringTransaction extends Transaction {
-  recurring: 1;
+  recurring: true;
   recurring_interval: 'daily' | 'weekly' | 'monthly' | 'yearly';
 }
 
@@ -173,7 +173,7 @@ export interface DeletedUser {
   email: string;
   full_name: string;
   role?: UserRole;
-  was_active?: number;
+  was_active?: boolean;
   created_at?: string | null;
   last_login?: string | null;
   deleted_at: string;
@@ -200,7 +200,7 @@ export interface Webhook {
   url: string;
   event: string;
   secret?: string;
-  is_active?: number;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string | null;
 }
@@ -231,4 +231,3 @@ export interface ActiveSession {
   expires_at: string;
   user_agent?: string | null;
 }
-

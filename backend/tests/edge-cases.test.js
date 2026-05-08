@@ -187,11 +187,11 @@ describe('Edge Cases and Error Handling', () => {
 
     console.log('\nEMPTY DESCRIPTION:', {
       status: response.status,
-      description: response.body.description,
+      description: response.body.transactions[0].description,
       note: 'Description defaults to null when not provided',
     });
 
-    expect(response.body.description).toBeNull();
+    expect(response.body.transactions[0].description).toBeNull();
   });
 
   test('EDGE 6: Transaction above maximum amount should be rejected', async () => {
