@@ -180,7 +180,15 @@ app.post('/api/client-error', clientErrorLimiter, (req, res) => {
     appVersion: body.appVersion ? String(body.appVersion).slice(0, 80) : undefined,
     platform: body.platform ? String(body.platform).slice(0, 80) : undefined,
     type: body.type ? String(body.type).slice(0, 40) : 'client',
-    metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : undefined,
+    metadata: (() => {
+      if (!body.metadata || typeof body.metadata !== 'object') return undefined;
+      try {
+        const serialized = JSON.stringify(body.metadata).slice(0, 2000);
+        return JSON.parse(serialized);
+      } catch {
+        return '[unserializable]';
+      }
+    })(),
   });
   res.status(202).json({ success: true });
 });

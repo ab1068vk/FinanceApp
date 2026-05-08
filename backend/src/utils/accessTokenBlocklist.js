@@ -1,8 +1,17 @@
 const { db } = require('../../database/db');
 
+const PRUNE_INTERVAL_MS = 60_000;
+let lastPruneTime = 0;
+
+// WARNING: This Map is an in-memory process-local cache of blocked JTIs.
+// The database remains the source of truth, but deployments using separate
+// databases per instance still need a shared store for reliable invalidation.
 const blockedJtis = new Map();
 
 function pruneExpiredBlockedTokens(now = Date.now()) {
+  const currentTime = Date.now();
+  if (currentTime - lastPruneTime < PRUNE_INTERVAL_MS) return;
+
   for (const [jti, expiresAtMs] of blockedJtis.entries()) {
     if (expiresAtMs <= now) blockedJtis.delete(jti);
   }
@@ -12,6 +21,8 @@ function pruneExpiredBlockedTokens(now = Date.now()) {
   } catch {
     // Reads fail closed in isAccessTokenBlocked; pruning is best-effort.
   }
+
+  lastPruneTime = currentTime;
 }
 
 function blockAccessToken(jti, expiresAtSeconds) {

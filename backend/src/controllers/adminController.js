@@ -952,7 +952,7 @@ function getUserSpendingByCategory(req, res, next) {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const params = [req.params.id];
-    const where = ['t.user_id = ?', "t.type = 'expense'", ...userDateFilters(req, 't.date', params)];
+    const where = ['t.user_id = ?', "t.type = 'expense'", 't.admin_deleted_at IS NULL', ...userDateFilters(req, 't.date', params)];
     const rows = db.prepare(`
       SELECT c.id AS category_id,
              COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -1035,6 +1035,7 @@ function getUserBudgetPerformance(req, res, next) {
 
 function exportUserData(req, res, next) {
   try {
+    // assertUserExists returns undefined when not found; keep the 404 guard.
     const user = assertUserExists(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const limit = exportLimit(req);

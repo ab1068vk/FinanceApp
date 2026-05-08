@@ -70,6 +70,12 @@ describe('Authentication API', () => {
       .send({ email: user.email, password: user.password })
       .expect(403);
 
+    const wrongPassword = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'WrongPass1!' })
+      .expect(401);
+    expect(wrongPassword.body).toEqual({ error: 'Invalid credentials' });
+
     await request(app)
       .post('/api/auth/verify-email')
       .send({ verificationToken: register.body.verificationToken })
@@ -106,7 +112,7 @@ describe('Authentication API', () => {
     await request(app).post('/api/auth/login').send({ email: validUser.email, password: 'WrongPass1!' }).expect(401);
   });
 
-  test('login after 5 failures returns 423 while account is locked', async () => {
+  test('login after 5 failures returns generic 401 while account is locked', async () => {
     const lockedUser = {
       email: `locked-${Date.now()}@financeapp.test`,
       password: 'StrongPass1!',
@@ -118,8 +124,9 @@ describe('Authentication API', () => {
       await request(app).post('/api/auth/login').send({ email: lockedUser.email, password: 'WrongPass1!' }).expect(401);
     }
 
-    const response = await request(app).post('/api/auth/login').send({ email: lockedUser.email, password: lockedUser.password }).expect(423);
-    expect(response.body.retryAfter.minutes).toBeGreaterThan(0);
+    const response = await request(app).post('/api/auth/login').send({ email: lockedUser.email, password: lockedUser.password }).expect(401);
+    expect(response.body).toEqual({ error: 'Invalid credentials' });
+    expect(response.body.retryAfter).toBeUndefined();
   });
 
   test('protected route without token returns 401', async () => {

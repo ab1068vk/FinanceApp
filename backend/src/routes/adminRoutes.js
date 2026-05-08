@@ -2,6 +2,7 @@
 const { body, param, query, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
+const net = require('net');
 const adminController = require('../controllers/adminController');
 const { requireAuth, requireAdmin, requireAdminScope } = require('../middleware/auth');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
@@ -88,13 +89,28 @@ const transactionFilters = [
   ...paging,
 ];
 const optionalUrl = (value) => value === '' || /^https?:\/\//i.test(String(value || ''));
+function isIpOrCidr(value) {
+  const raw = String(value || '');
+  const [address, prefix, extra] = raw.split('/');
+  if (extra !== undefined) return false;
+  const version = net.isIP(address);
+  if (!version) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d+$/.test(prefix)) return false;
+  const prefixNumber = Number(prefix);
+  return version === 4 ? prefixNumber >= 0 && prefixNumber <= 32 : prefixNumber >= 0 && prefixNumber <= 128;
+}
 const systemConfigRules = [
   body('max_accounts_per_user').optional().isInt({ min: 1, max: 1000 }).withMessage('max_accounts_per_user must be 1-1000').toInt(),
   body('default_currency')
     .optional()
     .isString().trim().matches(/^[A-Za-z]{3}$/).withMessage('default_currency must be a 3-letter currency code')
     .customSanitizer((value) => String(value).toUpperCase()),
-  body('date_format').optional().isString().isLength({ max: 40 }).withMessage('date_format must be up to 40 characters'),
+  body('date_format')
+    .optional()
+    .isString()
+    .isLength({ max: 40 }).withMessage('date_format must be up to 40 characters')
+    .matches(/^[YMDHhmsAa\s/\-.,[\]]+$/).withMessage('date_format contains invalid characters'),
   body('lockout_attempts').optional().isInt({ min: 1, max: 20 }).withMessage('lockout_attempts must be 1-20').toInt(),
   body('lockout_minutes').optional().isInt({ min: 1, max: 1440 }).withMessage('lockout_minutes must be 1-1440').toInt(),
   body('password_requires_special').optional().isBoolean().withMessage('password_requires_special must be boolean').toBoolean(),
@@ -141,7 +157,7 @@ router.post('/default-categories', [
   body('name').isString().trim().isLength({ min: 1, max: 50 }).withMessage('name must be 1-50 characters'),
   body('type').isIn(categoryTypes).withMessage(`type must be one of: ${categoryTypes.join(', ')}`),
   body('icon').optional().isString().isLength({ max: 50 }).withMessage('icon must be up to 50 characters'),
-  body('color').optional().isString().isLength({ max: 20 }).withMessage('color must be up to 20 characters'),
+  body('color').optional().isString().isLength({ max: 20 }).withMessage('color must be up to 20 characters').matches(/^#[0-9A-Fa-f]{3,8}$/).withMessage('color must be a valid hex color'),
   body('is_default').optional().isBoolean().withMessage('is_default must be boolean'),
   body('is_system').optional().isBoolean().withMessage('is_system must be boolean'),
   body('sort_order').optional().isInt({ min: 0, max: 10000 }).withMessage('sort_order must be 0-10000'),
@@ -151,7 +167,7 @@ router.put('/default-categories/:id', [
   body('name').optional().isString().trim().isLength({ min: 1, max: 50 }).withMessage('name must be 1-50 characters'),
   body('type').optional().isIn(categoryTypes).withMessage(`type must be one of: ${categoryTypes.join(', ')}`),
   body('icon').optional().isString().isLength({ max: 50 }).withMessage('icon must be up to 50 characters'),
-  body('color').optional().isString().isLength({ max: 20 }).withMessage('color must be up to 20 characters'),
+  body('color').optional().isString().isLength({ max: 20 }).withMessage('color must be up to 20 characters').matches(/^#[0-9A-Fa-f]{3,8}$/).withMessage('color must be a valid hex color'),
   body('is_default').optional().isBoolean().withMessage('is_default must be boolean'),
   body('is_system').optional().isBoolean().withMessage('is_system must be boolean'),
   body('is_active').optional().isBoolean().withMessage('is_active must be boolean'),
@@ -222,7 +238,10 @@ router.put('/webhooks/:id', [
 router.get('/webhooks/:id/deliveries', idParam, validate, adminController.listWebhookDeliveries);
 router.get('/security-blocks', adminController.getSecurityBlocks);
 router.post('/security-blocks', [
-  body('ip').isString().isLength({ min: 3, max: 80 }).withMessage('ip must be 3-80 characters'),
+  body('ip')
+    .isString()
+    .isLength({ min: 3, max: 80 }).withMessage('ip must be 3-80 characters')
+    .custom(isIpOrCidr).withMessage('ip must be a valid IPv4, IPv6, or CIDR address'),
   body('duration_minutes').optional().isInt({ min: 1, max: 1440 }).withMessage('duration_minutes must be 1-1440'),
 ], validate, adminController.blockSecurityAddress);
 router.delete('/security-blocks/:ip', param('ip').isString().isLength({ min: 3, max: 80 }), validate, adminController.clearSecurityAddress);

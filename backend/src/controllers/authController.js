@@ -105,14 +105,6 @@ function isLocked(user) {
   return user.locked_until && new Date(user.locked_until).getTime() > Date.now();
 }
 
-function lockTimeRemaining(lockedUntil) {
-  const milliseconds = Math.max(new Date(lockedUntil).getTime() - Date.now(), 0);
-  return {
-    seconds: Math.ceil(milliseconds / 1000),
-    minutes: Math.ceil(milliseconds / 60000),
-  };
-}
-
 function issueAccessToken(user) {
   return generateAccessToken({
     sub: user.id,
@@ -310,12 +302,6 @@ async function login(req, res, next) {
         action: 'SECURITY_AUTH_FAILURE',
         newValue: { email, reason: deletedUser ? 'deleted_user' : 'unknown_email' },
       });
-      if (deletedUser) {
-        return res.status(410).json({
-          error: 'Your account was deleted by an administrator.',
-          code: 'ACCOUNT_DELETED',
-        });
-      }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -330,12 +316,15 @@ async function login(req, res, next) {
     }
 
     if (emailVerificationRequired() && !user.email_verified_at) {
-      await verifyPassword(password, user.password_hash);
+      const passwordMatches = await verifyPassword(password, user.password_hash);
       writeSecurityLog(req, {
         action: 'SECURITY_AUTH_FAILURE',
         userId: user.id,
         newValue: { email, reason: 'email_unverified' },
       });
+      if (!passwordMatches) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
       return res.status(403).json({
         error: 'Please verify your email before signing in.',
         code: 'EMAIL_NOT_VERIFIED',
@@ -343,10 +332,13 @@ async function login(req, res, next) {
     }
 
     if (isLocked(user)) {
-      return res.status(423).json({
-        error: 'Account temporarily locked',
-        retryAfter: lockTimeRemaining(user.locked_until),
+      await verifyPassword(password, user.password_hash);
+      writeSecurityLog(req, {
+        action: 'SECURITY_ACCOUNT_LOCKED',
+        userId: user.id,
+        newValue: { email, reason: 'account_locked' },
       });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const passwordMatches = await verifyPassword(password, user.password_hash);
@@ -430,11 +422,16 @@ function refreshToken(req, res, next) {
     }
 
     if (storedToken.revoked) {
-      if (storedToken.family_id) db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE family_id = ?').run(storedToken.family_id);
+      const rootId = storedToken.family_id || storedToken.id;
+      if (!rootId) {
+        logger.warn('Revoked refresh token missing family root id', { tokenId: storedToken.id, userId: storedToken.user_id });
+        return res.status(401).json({ error: 'Invalid refresh token' });
+      }
+      db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ? OR family_id = ?').run(rootId, rootId);
       writeSecurityLog(req, {
         userId: storedToken.user_id,
         action: 'SECURITY_REFRESH_TOKEN_REUSE',
-        newValue: { family_id: storedToken.family_id },
+        newValue: { family_id: rootId },
       });
       return res.status(401).json({ error: 'Invalid refresh token' });
     }

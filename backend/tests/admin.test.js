@@ -950,11 +950,8 @@ describe('Admin API', () => {
     const loginAfterDelete = await request(app)
       .post('/api/auth/login')
       .send({ email: target.credentials.email, password: target.credentials.password })
-      .expect(410);
-    expect(loginAfterDelete.body).toEqual({
-      error: 'Your account was deleted by an administrator.',
-      code: 'ACCOUNT_DELETED',
-    });
+      .expect(401);
+    expect(loginAfterDelete.body).toEqual({ error: 'Invalid credentials' });
 
     await request(app)
       .post('/api/auth/register')

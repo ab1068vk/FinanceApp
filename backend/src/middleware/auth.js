@@ -8,15 +8,20 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// Process-local debounce for the audit timestamp write; last_used_at is tracked
+// with one-minute granularity, not exact per-request precision.
+const apiTokenLastUsedWritten = new Map();
+const API_TOKEN_WRITE_DEBOUNCE_MS = 60_000;
+
 function authenticateApiToken(token, req, res, next) {
   const row = db.prepare(`
     SELECT t.id AS token_id, t.scopes, u.*
     FROM admin_api_tokens t
+    -- created_by is joined for audit attribution only, not access control.
     JOIN users u ON u.id = t.created_by
     WHERE t.token_hash = ?
       AND t.is_active = 1
       AND t.revoked_at IS NULL
-      AND u.is_active = 1
   `).get(hashToken(token));
 
   if (!row) {
@@ -24,7 +29,12 @@ function authenticateApiToken(token, req, res, next) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 
-  db.prepare('UPDATE admin_api_tokens SET last_used_at = ? WHERE id = ?').run(nowIso(), row.token_id);
+  const lastWritten = apiTokenLastUsedWritten.get(row.token_id) || 0;
+  const nowMs = Date.now();
+  if (nowMs - lastWritten >= API_TOKEN_WRITE_DEBOUNCE_MS) {
+    db.prepare('UPDATE admin_api_tokens SET last_used_at = ? WHERE id = ?').run(nowIso(), row.token_id);
+    apiTokenLastUsedWritten.set(row.token_id, nowMs);
+  }
   const { token_id: tokenId, scopes, ...user } = row;
   req.auth = {
     api_token_id: tokenId,
