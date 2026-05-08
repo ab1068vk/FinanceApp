@@ -112,11 +112,17 @@ function getBudgets(req, res, next) {
     const total = db.prepare('SELECT COUNT(*) AS count FROM budgets WHERE user_id = ?').get(req.user.id).count;
     const budgets = db.prepare(`SELECT b.*, c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
       COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = b.user_id AND t.category_id = b.category_id
-        AND t.type = 'expense' AND datetime(t.date) >= datetime(b.start_date)
+        AND t.type = 'expense' AND t.admin_deleted_at IS NULL AND datetime(t.date) >= datetime(b.start_date)
         AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date, '+1 day', '-1 second'))), 0) AS current_spending
       FROM budgets b LEFT JOIN categories c ON c.id = b.category_id
       WHERE b.user_id = ? ORDER BY b.created_at DESC LIMIT ? OFFSET ?`).all(req.user.id, limit, offset);
-    const data = budgets.map((budget) => ({ ...budget, remaining: Number(budget.amount) - Number(budget.current_spending) }));
+    const data = budgets.map((budget) => ({
+      ...budget,
+      remaining: Number(budget.amount) - Number(budget.current_spending),
+      percent_used: Number(budget.amount) > 0
+        ? (Number(budget.current_spending) / Number(budget.amount)) * 100
+        : 0,
+    }));
     return res.json({ data: serializeMoney(data), pagination: paginationMeta(page, limit, total) });
   } catch (error) { return next(error); }
 }
@@ -129,15 +135,23 @@ function getBudget(req, res, next) {
 
     const currentSpending = db.prepare(`SELECT COALESCE(SUM(amount), 0) AS total
       FROM transactions WHERE user_id = ? AND category_id = ? AND type = 'expense'
+      AND admin_deleted_at IS NULL
       AND datetime(date) >= datetime(?) AND (? IS NULL OR datetime(date) <= datetime(?, '+1 day', '-1 second'))`)
       .get(req.user.id, budget.category_id, budget.start_date, budget.end_date, budget.end_date);
 
     const breakdown = db.prepare(`SELECT strftime('%Y-W%W', date) AS week, COALESCE(SUM(amount), 0) AS spending
       FROM transactions WHERE user_id = ? AND category_id = ? AND type = 'expense'
+      AND admin_deleted_at IS NULL
       AND datetime(date) >= datetime(?) AND (? IS NULL OR datetime(date) <= datetime(?, '+1 day', '-1 second'))
       GROUP BY week ORDER BY week`).all(req.user.id, budget.category_id, budget.start_date, budget.end_date, budget.end_date);
     const current = Number(currentSpending.total);
-    return res.json(serializeMoney({ ...budget, current_spending: current, remaining: Number(budget.amount) - current, weekly_breakdown: breakdown }));
+    return res.json(serializeMoney({
+      ...budget,
+      current_spending: current,
+      remaining: Number(budget.amount) - current,
+      percent_used: Number(budget.amount) > 0 ? (current / Number(budget.amount)) * 100 : 0,
+      weekly_breakdown: breakdown,
+    }));
   } catch (error) { return next(error); }
 }
 

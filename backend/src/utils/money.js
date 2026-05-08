@@ -27,17 +27,25 @@ function amountToCents(value, { allowZero = true } = {}) {
   if (!Number.isFinite(amount) || (!allowZero && amount <= 0)) {
     throw Object.assign(new Error('amount must be a finite number'), { statusCode: 400 });
   }
-  if (!/^-?\d+(\.\d{1,2})?$/.test(String(raw))) {
-    throw Object.assign(new Error('amount must have no more than 2 decimal places'), { statusCode: 400 });
+  if (!/^-?\d+(\.\d+)?$/.test(String(raw))) {
+    throw Object.assign(new Error('amount must be a finite number'), { statusCode: 400 });
   }
-  return Math.round(amount * 100);
+  const sign = amount < 0 ? -1 : 1;
+  const [intPart, decPart = ''] = String(raw).replace('-', '').split('.');
+  const centsDigits = decPart.padEnd(3, '0').slice(0, 3);
+  const roundedCents = parseInt(centsDigits.slice(0, 2), 10) + (Number(centsDigits[2]) >= 5 ? 1 : 0);
+  const abs = parseInt(intPart, 10) * 100 + roundedCents;
+  if (abs === 0 && amount !== 0) {
+    throw Object.assign(new Error('amount is too small to represent in cents'), { statusCode: 400 });
+  }
+  return sign * abs;
 }
 
 function centsToAmount(value) {
   if (value === null || value === undefined) return value;
   const cents = Number(value);
   if (!Number.isFinite(cents)) return value;
-  return cents / 100;
+  return Math.round(cents) / 100;
 }
 
 function moneySql(column) {

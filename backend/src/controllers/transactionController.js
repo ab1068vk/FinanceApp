@@ -147,6 +147,7 @@ function notifyBudgetOverspendIfNeeded(userId, transaction) {
         WHERE t.user_id = b.user_id
           AND t.category_id = b.category_id
           AND t.type = 'expense'
+          AND t.admin_deleted_at IS NULL
           AND datetime(t.date) >= datetime(b.start_date)
           AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date))), 0) AS spent
     FROM budgets b

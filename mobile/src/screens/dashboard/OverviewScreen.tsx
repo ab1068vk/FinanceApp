@@ -19,7 +19,7 @@ import { fetchBudgets, type Budget } from '../../store/slices/budgetsSlice';
 import { type Transaction } from '../../store/slices/transactionsSlice';
 import { useAppDispatch } from '../../store/hooks';
 import { useTheme } from '../../theme';
-import { formatCurrency, formatDate, formatPercent } from '../../utils/formatters';
+import { formatCurrency, formatDate } from '../../utils/formatters';
 import type { FeatherIconName } from '../../utils/icons';
 
 type Props = StackScreenProps<DashboardStackParamList, 'Overview'>;
@@ -165,6 +165,7 @@ export default function OverviewScreen({ navigation }: Props) {
     const largestExpense = expenseGroups(data.summary)[0];
     const budgetLimit = data.budgets.reduce((sum, budget) => sum + amountValue(budget.amount), 0);
     const budgetSpent = data.budgets.reduce((sum, budget) => sum + amountValue(budget.current_spending), 0);
+    const budgetUsed = budgetLimit > 0 ? budgetSpent / budgetLimit : 0;
     const overBudgetCount = data.budgets.filter((budget) => amountValue(budget.current_spending) > amountValue(budget.amount)).length;
     const activeBudgets = data.budgets.filter((budget) => !budget.end_date || new Date(budget.end_date) >= new Date()).length;
 
@@ -176,6 +177,7 @@ export default function OverviewScreen({ navigation }: Props) {
       largestExpense,
       budgetLimit,
       budgetSpent,
+      budgetUsed,
       overBudgetCount,
       activeBudgets,
       expenseCategories: expenseGroups(data.summary),
@@ -238,7 +240,7 @@ export default function OverviewScreen({ navigation }: Props) {
         <View style={styles.insightGrid}>
           <InsightCard icon="trending-up" label="Savings rate" value={`${overview.savingsRate.toFixed(1)}%`} tone={overview.savingsRate >= 0 ? theme.colors.success : theme.colors.danger} />
           <InsightCard icon="credit-card" label="Credit used" value={formatCurrency(overview.totalCredit)} tone={theme.colors.warning} />
-          <InsightCard icon="pie-chart" label="Budget used" value={formatPercent(overview.budgetSpent, overview.budgetLimit)} tone={theme.colors.accent} />
+          <InsightCard icon="pie-chart" label="Budget used" value={`${(overview.budgetUsed * 100).toFixed(1)}%`} tone={theme.colors.accent} />
           <InsightCard icon="activity" label="Avg. movement" value={formatCurrency(overview.cashflowAverage)} tone={theme.colors.highlight} />
         </View>
 

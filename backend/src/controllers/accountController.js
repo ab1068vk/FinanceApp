@@ -55,38 +55,42 @@ function transactionsForAccountDelete(accountId, userId) {
 }
 
 function deleteAccountTransactions(accountId, userId) {
-  const transactions = transactionsForAccountDelete(accountId, userId);
-  for (const transaction of transactions) {
-    updateStoredBalance(transaction.account_id, userId, -transactionBalanceDelta(transaction));
-    db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(transaction.id, userId);
-  }
-  return transactions.length;
+  return db.transaction(() => {
+    const transactions = transactionsForAccountDelete(accountId, userId);
+    for (const transaction of transactions) {
+      updateStoredBalance(transaction.account_id, userId, -transactionBalanceDelta(transaction));
+      db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(transaction.id, userId);
+    }
+    return transactions.length;
+  })();
 }
 
 function moveAccountTransactionsToCash(accountId, userId) {
-  const cashAccount = getOrCreateDefaultCashAccount(userId);
-  if (!cashAccount) {
-    throw Object.assign(new Error('Default cash account is unavailable'), { statusCode: 500 });
-  }
-  if (cashAccount.id === accountId) {
-    throw Object.assign(new Error('The default cash account cannot be attached to itself'), { statusCode: 400 });
-  }
+  return db.transaction(() => {
+    const cashAccount = getOrCreateDefaultCashAccount(userId);
+    if (!cashAccount) {
+      throw Object.assign(new Error('Default cash account is unavailable'), { statusCode: 500 });
+    }
+    if (cashAccount.id === accountId) {
+      throw Object.assign(new Error('The default cash account cannot be attached to itself'), { statusCode: 400 });
+    }
 
-  const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
-  const movedDelta = direct.reduce((sum, transaction) => sum + transactionBalanceDelta(transaction), 0);
-  const updatedAt = nowIso();
+    const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
+    const movedDelta = direct.reduce((sum, transaction) => sum + transactionBalanceDelta(transaction), 0);
+    const updatedAt = nowIso();
 
-  db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
-    .run(cashAccount.id, updatedAt, accountId, userId);
-  db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ?')
-    .run(cashAccount.id, updatedAt, accountId, userId);
-  db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ?')
-    .run(cashAccount.id, updatedAt, accountId, userId);
+    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
+      .run(cashAccount.id, updatedAt, accountId, userId);
+    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ?')
+      .run(cashAccount.id, updatedAt, accountId, userId);
+    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ?')
+      .run(cashAccount.id, updatedAt, accountId, userId);
 
-  updateStoredBalance(accountId, userId, -movedDelta);
-  updateStoredBalance(cashAccount.id, userId, movedDelta);
+    updateStoredBalance(accountId, userId, -movedDelta);
+    updateStoredBalance(cashAccount.id, userId, movedDelta);
 
-  return { moved: direct.length, cashAccountId: cashAccount.id };
+    return { moved: direct.length, cashAccountId: cashAccount.id };
+  })();
 }
 
 function createAccount(req, res, next) {
