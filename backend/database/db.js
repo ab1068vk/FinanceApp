@@ -82,6 +82,7 @@ const defaultCashAccount = {
 };
 
 function createTables() {
+  // FIX: 10
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -392,6 +393,8 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_transactions_category_id ON transactions(category_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_transactions_account_user_deleted_date ON transactions(account_id, user_id, admin_deleted_at, date, created_at);
+    CREATE INDEX IF NOT EXISTS idx_transactions_user_transfer_group ON transactions(user_id, transfer_group_id, admin_deleted_at);
     CREATE INDEX IF NOT EXISTS idx_txn_budget_lookup ON transactions(user_id, category_id, type, admin_deleted_at, date);
     CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
     CREATE INDEX IF NOT EXISTS idx_budgets_category_id ON budgets(category_id);
@@ -405,10 +408,12 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_hash ON email_verification_tokens(token_hash);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_id ON audit_logs(entity_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
     CREATE INDEX IF NOT EXISTS idx_access_token_blocklist_expires ON access_token_blocklist(expires_at);
     CREATE INDEX IF NOT EXISTS idx_deleted_users_deleted_at ON deleted_users(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_deleted_users_email ON deleted_users(email);
     CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active, starts_at, ends_at);
     CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_user ON announcement_dismissals(user_id);
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
@@ -419,6 +424,7 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_recurring_transactions_category_id ON recurring_transactions(category_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id);
   `);
 }
@@ -475,20 +481,17 @@ function ensureSchemaUpdates() {
   `).all();
   const removeDeletedUserAudit = db.prepare(`
     DELETE FROM audit_logs
-    WHERE user_id = @id
-      OR entity_id = @id
-      OR old_value LIKE @email
-      OR new_value LIKE @email
-      OR old_value LIKE @full_name
-      OR new_value LIKE @full_name
+    WHERE user_id = ?
+      OR entity_id = ?
+      OR old_value LIKE ?
+      OR new_value LIKE ?
+      OR old_value LIKE ?
+      OR new_value LIKE ?
   `);
+  // FIX: 1
   const removeDeletedUser = db.prepare('DELETE FROM users WHERE id = ?');
   for (const user of previouslySoftDeletedUsers) {
-    removeDeletedUserAudit.run({
-      id: user.id,
-      email: `%${user.email}%`,
-      full_name: `%${user.full_name}%`,
-    });
+    removeDeletedUserAudit.run(user.id, user.id, `%${user.email}%`, `%${user.email}%`, `%${user.full_name}%`, `%${user.full_name}%`);
     removeDeletedUser.run(user.id);
   }
 
@@ -525,6 +528,9 @@ function ensureSchemaUpdates() {
   const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all();
   const accountIdColumn = transactionColumns.find((column) => column.name === 'account_id');
   if (accountIdColumn?.notnull) {
+    const transactionColumnNames = new Set(transactionColumns.map((column) => column.name));
+    const columnOrNull = (column) => (transactionColumnNames.has(column) ? column : 'NULL');
+    // FIX: 7
     db.exec(`
       CREATE TABLE transactions_next (
         id TEXT PRIMARY KEY,
@@ -544,21 +550,28 @@ function ensureSchemaUpdates() {
         transfer_direction TEXT CHECK (transfer_direction IS NULL OR transfer_direction IN ('source', 'destination')),
         to_account_id TEXT,
         from_account_id TEXT,
+        admin_deleted_at TEXT,
+        admin_deleted_by TEXT,
+        admin_delete_reason TEXT,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL,
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
+        FOREIGN KEY (admin_deleted_by) REFERENCES users(id) ON DELETE SET NULL
       );
 
       INSERT INTO transactions_next (
         id, user_id, account_id, category_id, type, amount, description, note, date,
         recurring, recurring_interval, receipt_path, tags, transfer_group_id, transfer_direction,
-        to_account_id, from_account_id, created_at, updated_at
+        to_account_id, from_account_id, admin_deleted_at, admin_deleted_by, admin_delete_reason,
+        created_at, updated_at
       )
       SELECT
         id, user_id, account_id, category_id, type, amount, description, note, date,
-        recurring, recurring_interval, receipt_path, tags, NULL, NULL, NULL, NULL, created_at, updated_at
+        recurring, recurring_interval, receipt_path, tags, ${columnOrNull('transfer_group_id')}, ${columnOrNull('transfer_direction')},
+        ${columnOrNull('to_account_id')}, ${columnOrNull('from_account_id')}, ${columnOrNull('admin_deleted_at')},
+        ${columnOrNull('admin_deleted_by')}, ${columnOrNull('admin_delete_reason')}, created_at, updated_at
       FROM transactions;
 
       DROP TABLE transactions;
@@ -682,13 +695,18 @@ function ensureSchemaUpdates() {
     }
   }
 
+  // FIX: 10
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_transactions_transfer_group_id ON transactions(transfer_group_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_transfer_direction ON transactions(transfer_direction);
     CREATE INDEX IF NOT EXISTS idx_transactions_admin_deleted ON transactions(admin_deleted_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_transactions_account_user_deleted_date ON transactions(account_id, user_id, admin_deleted_at, date, created_at);
+    CREATE INDEX IF NOT EXISTS idx_transactions_user_transfer_group ON transactions(user_id, transfer_group_id, admin_deleted_at);
     CREATE INDEX IF NOT EXISTS idx_txn_budget_lookup ON transactions(user_id, category_id, type, admin_deleted_at, date);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_id ON audit_logs(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_deleted_users_email ON deleted_users(email);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
     CREATE INDEX IF NOT EXISTS idx_users_security_stamp ON users(security_stamp);
@@ -747,6 +765,7 @@ function ensureSchemaUpdates() {
     );
     CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS push_tokens (
       id TEXT PRIMARY KEY,
@@ -794,10 +813,12 @@ function seedDefaultCashAccounts() {
   const usersWithoutAccounts = db.prepare(`
     SELECT u.id
     FROM users u
-    WHERE NOT EXISTS (
+    WHERE u.is_active = 1
+      AND NOT EXISTS (
       SELECT 1 FROM accounts a WHERE a.user_id = u.id AND a.is_active = 1
     )
   `).all();
+  // FIX: 8
 
   const insertAccount = db.prepare(`
     INSERT OR IGNORE INTO accounts (id, user_id, name, type, balance, overdraft_limit, currency, color, icon, is_active, created_at, updated_at)

@@ -16,7 +16,8 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
   );
 }
 function allowedCategory(id, userId) {
-  return db.prepare('SELECT * FROM categories WHERE id = ? AND (user_id = ? OR user_id IS NULL)').get(id, userId);
+  // FIX: 3
+  return db.prepare('SELECT * FROM categories WHERE id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1').get(id, userId);
 }
 function validateBudgetPeriodRange(period, startDate, endDate) {
   if (!endDate) return;

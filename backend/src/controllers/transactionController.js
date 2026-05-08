@@ -8,7 +8,7 @@ const {
   warnIfAccountBalanceMismatch,
 } = require('../utils/accountBalance');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { amountToCents, centsToAmount, computeBalanceDelta, serializeMoney } = require('../utils/money');
+const { amountToCents, centsToAmount, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { sendPushNotification } = require('../utils/pushNotifications');
 
 const MAX_TRANSACTION_AMOUNT = 100000000;
@@ -52,7 +52,8 @@ function getOwnedAccount(id, userId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ? AND is_active = 1').get(id, userId);
 }
 function getAllowedCategory(id, userId) {
-  return db.prepare('SELECT * FROM categories WHERE id = ? AND (user_id = ? OR user_id IS NULL)').get(id, userId);
+  // FIX: 3
+  return db.prepare('SELECT * FROM categories WHERE id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1').get(id, userId);
 }
 function sanitizeText(value) {
   if (typeof value !== 'string') return null;
@@ -184,7 +185,8 @@ function createTransaction(req, res, next) {
     const base = {
       id: crypto.randomUUID(), user_id: req.user.id, account_id: account.id, category_id: categoryId,
       type: req.body.type, amount, description: sanitizeText(req.body.description), note: sanitizeText(req.body.note),
-      date: transactionDate, recurring: req.body.recurring ? 1 : 0,
+      date: transactionDate, recurring: parseBoolField(req.body.recurring),
+      // FIX: 4
       recurring_interval: req.body.recurring_interval || null, receipt_path: req.body.receipt_path || null,
       tags: JSON.stringify(parseTags(req.body.tags)), transfer_group_id: null, transfer_direction: null,
       to_account_id: null, from_account_id: null, created_at: createdAt, updated_at: null,

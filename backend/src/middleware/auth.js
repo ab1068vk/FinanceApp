@@ -14,6 +14,7 @@ const apiTokenLastUsedWritten = new Map();
 const API_TOKEN_WRITE_DEBOUNCE_MS = 60_000;
 
 function authenticateApiToken(token, req, res, next) {
+  // FIX: 2
   const row = db.prepare(`
     SELECT t.id AS token_id, t.scopes, u.*
     FROM admin_api_tokens t
@@ -22,6 +23,7 @@ function authenticateApiToken(token, req, res, next) {
     WHERE t.token_hash = ?
       AND t.is_active = 1
       AND t.revoked_at IS NULL
+      AND u.is_active = 1
   `).get(hashToken(token));
 
   if (!row) {

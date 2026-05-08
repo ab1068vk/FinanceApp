@@ -5,7 +5,7 @@ const { clientIp } = require('../utils/clientIp');
 const { blockAccessToken } = require('../utils/accessTokenBlocklist');
 const logger = require('../utils/logger');
 const { createDefaultCashAccount } = require('../utils/defaultAccount');
-const { serializeMoney } = require('../utils/money');
+const { parseBoolField, serializeMoney } = require('../utils/money');
 const { DEFAULT_PREFS, sendPushNotification, upsertDefaultPreferences } = require('../utils/pushNotifications');
 const {
   deliverEmailVerificationToken,
@@ -804,7 +804,8 @@ function updateNotificationSettings(req, res, next) {
     const updatedAt = nowIso();
     Object.keys(DEFAULT_PREFS).forEach((type) => {
       if (Object.prototype.hasOwnProperty.call(updates, type)) {
-        update.run(updates[type] ? 1 : 0, updatedAt, req.user.id, type);
+        update.run(parseBoolField(updates[type]), updatedAt, req.user.id, type);
+        // FIX: 4
       }
     });
     return getNotificationSettings(req, res, next);
@@ -934,7 +935,8 @@ function updateMe(req, res, next) {
       updates.currency = req.body.currency;
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'has_completed_onboarding')) {
-      updates.has_completed_onboarding = req.body.has_completed_onboarding ? 1 : 0;
+      updates.has_completed_onboarding = parseBoolField(req.body.has_completed_onboarding);
+      // FIX: 4
     }
     if (!Object.keys(updates).length) {
       return res.status(400).json({ error: 'No profile fields provided' });

@@ -10,7 +10,8 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { amountToCents, computeBalanceDelta, serializeMoney } = require('../utils/money');
+const { accountCurrentBalanceExpr } = require('../utils/accountBalance');
+const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { deliverAdminTemporaryPassword } = require('../utils/passwordResetDelivery');
@@ -71,6 +72,12 @@ function normalizeTokenScopes(scopes) {
   const normalized = [...new Set(requestedScopes.map((scope) => String(scope || '').trim()).filter(Boolean))];
   const invalid = normalized.filter((scope) => !AVAILABLE_TOKEN_SCOPE_SET.has(scope));
   return { scopes: normalized, invalid };
+}
+
+function derivedAccountBalance(accountId, userId) {
+  // FIX: 6
+  const row = db.prepare(`SELECT ${accountCurrentBalanceExpr('a')} AS current_balance FROM accounts a WHERE a.id = ? AND a.user_id = ?`).get(accountId, userId);
+  return Number(row?.current_balance || 0);
 }
 
 function audit(req, action, entityType, entityId, oldValue = null, newValue = null) {
@@ -378,11 +385,12 @@ function moveAccountTransactionsToCash(accountId, userId) {
     const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
-    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
+    // FIX: 5
+    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ?')
+    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ?')
+    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
 
     updateStoredBalance(accountId, userId, -movedDelta);
@@ -633,7 +641,8 @@ function updateUserStatus(req, res, next) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const isActive = req.body.is_active ? 1 : 0;
+    const isActive = parseBoolField(req.body.is_active);
+    // FIX: 4
     if (!isActive && wouldRemoveLastActiveAdmin(user)) return res.status(409).json({ error: 'At least one active admin must remain' });
     let updated;
     db.transaction(() => {
@@ -818,6 +827,7 @@ function deleteUser(req, res, next) {
         transaction_total: archive.summary.transaction_total,
         details_json: JSON.stringify({ summary: archive.summary }),
       });
+      // FIX: 1
       db.prepare(`
         DELETE FROM audit_logs
         WHERE user_id = ?
@@ -1265,7 +1275,8 @@ function updateUserAccountStatus(req, res, next) {
   try {
     const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.accountId, req.params.id);
     if (!account) return res.status(404).json({ error: 'Account not found' });
-    const isActive = req.body.is_active ? 1 : 0;
+    const isActive = parseBoolField(req.body.is_active);
+    // FIX: 4
     const updatedAt = nowIso();
     db.transaction(() => {
       db.prepare('UPDATE accounts SET is_active = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(isActive, updatedAt, req.params.accountId, req.params.id);
@@ -1343,7 +1354,9 @@ function createAccountBalanceCorrection(req, res, next) {
     const targetBalance = amountToCents(req.body.target_balance);
     const reason = String(req.body.reason || '').trim();
     if (reason.length < 5) return res.status(400).json({ error: 'A correction reason of at least 5 characters is required' });
-    const delta = targetBalance - Number(account.balance || 0);
+    const derivedBalance = derivedAccountBalance(account.id, account.user_id);
+    const delta = targetBalance - derivedBalance;
+    // FIX: 6
     if (Math.abs(delta) < 1) return res.status(400).json({ error: 'Account balance already matches target_balance' });
     const now = nowIso();
     const correction = {
@@ -1380,8 +1393,8 @@ function createAccountBalanceCorrection(req, res, next) {
           @to_account_id, @from_account_id, @created_at, @updated_at
         )
       `).run(correction);
-      updateStoredBalance(account.id, req.params.id, delta);
-      audit(req, 'ADMIN_CREATED_BALANCE_CORRECTION', 'account', account.id, { balance: account.balance }, { target_balance: targetBalance, delta, reason, transaction_id: correction.id });
+      db.prepare('UPDATE accounts SET balance = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(targetBalance, now, account.id, req.params.id);
+      audit(req, 'ADMIN_CREATED_BALANCE_CORRECTION', 'account', account.id, { balance: account.balance, current_balance: derivedBalance }, { target_balance: targetBalance, delta, reason, transaction_id: correction.id });
     })();
     return res.status(201).json(serializeMoney({ transaction: correction, account: db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id) }));
   } catch (error) {
@@ -1411,8 +1424,9 @@ function createDefaultCategory(req, res, next) {
       icon: req.body.icon || null,
       color: req.body.color || null,
       type: req.body.type,
-      is_default: req.body.is_default === false ? 0 : 1,
-      is_system: req.body.is_system ? 1 : 0,
+      is_default: Object.prototype.hasOwnProperty.call(req.body, 'is_default') ? parseBoolField(req.body.is_default) : 1,
+      is_system: parseBoolField(req.body.is_system),
+      // FIX: 4
       is_active: 1,
       sort_order: Number(req.body.sort_order || maxOrder + 10),
       created_at: now,
@@ -1439,7 +1453,8 @@ function updateDefaultCategory(req, res, next) {
     const updates = {};
     for (const field of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-        updates[field] = ['is_default', 'is_system', 'is_active'].includes(field) ? (req.body[field] ? 1 : 0) : req.body[field];
+        updates[field] = ['is_default', 'is_system', 'is_active'].includes(field) ? parseBoolField(req.body[field]) : req.body[field];
+        // FIX: 4
       }
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No allowed fields provided' });
@@ -1746,7 +1761,8 @@ function createAnnouncement(req, res, next) {
       id: crypto.randomUUID(),
       title: req.body.title,
       body: req.body.body,
-      is_active: req.body.is_active === false ? 0 : 1,
+      is_active: Object.prototype.hasOwnProperty.call(req.body, 'is_active') ? parseBoolField(req.body.is_active) : 1,
+      // FIX: 4
       starts_at: req.body.starts_at || null,
       ends_at: req.body.ends_at || null,
       created_at: nowIso(),
@@ -1775,7 +1791,10 @@ function updateAnnouncement(req, res, next) {
     if (!old) return res.status(404).json({ error: 'Announcement not found' });
     const updates = {};
     for (const field of ['title', 'body', 'starts_at', 'ends_at', 'is_active']) {
-      if (Object.prototype.hasOwnProperty.call(req.body, field)) updates[field] = field === 'is_active' ? (req.body[field] ? 1 : 0) : req.body[field];
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        updates[field] = field === 'is_active' ? parseBoolField(req.body[field]) : req.body[field];
+        // FIX: 4
+      }
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No allowed fields provided' });
     updates.updated_at = nowIso();
@@ -1888,7 +1907,8 @@ function createWebhook(req, res, next) {
       name: req.body.name,
       url: assertSafeWebhookUrl(req.body.url),
       event: req.body.event,
-      is_active: req.body.is_active === false ? 0 : 1,
+      is_active: Object.prototype.hasOwnProperty.call(req.body, 'is_active') ? parseBoolField(req.body.is_active) : 1,
+      // FIX: 4
       secret: encryptSecret(req.body.secret || crypto.randomBytes(16).toString('hex')),
       created_at: nowIso(),
       updated_at: null,
@@ -1911,7 +1931,10 @@ function updateWebhook(req, res, next) {
     if (!old) return res.status(404).json({ error: 'Webhook not found' });
     const updates = {};
     for (const field of ['name', 'url', 'event', 'is_active', 'secret']) {
-      if (Object.prototype.hasOwnProperty.call(req.body, field)) updates[field] = field === 'is_active' ? (req.body[field] ? 1 : 0) : req.body[field];
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        updates[field] = field === 'is_active' ? parseBoolField(req.body[field]) : req.body[field];
+        // FIX: 4
+      }
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No allowed fields provided' });
     if (Object.prototype.hasOwnProperty.call(updates, 'url')) {

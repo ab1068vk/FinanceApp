@@ -32,10 +32,16 @@ const BOOLEAN_RESPONSE_KEYS = new Set([
   'was_active',
 ]);
 
-function amountToCents(value, { allowZero = true } = {}) {
+function parseBoolField(val) {
+  // FIX: 4
+  if (val === false || val === 0 || val === '0' || val === 'false') return 0;
+  return val ? 1 : 0;
+}
+
+function amountToCents(value, { allowZero = true, allowNegative = false } = {}) {
   const raw = typeof value === 'string' ? value.trim() : value;
   const amount = Number(raw);
-  if (!Number.isFinite(amount) || (!allowZero && amount <= 0)) {
+  if (!Number.isFinite(amount)) {
     throw Object.assign(new Error('amount must be a finite number'), { statusCode: 400 });
   }
   if (!/^-?\d+(\.\d+)?$/.test(String(raw))) {
@@ -46,8 +52,15 @@ function amountToCents(value, { allowZero = true } = {}) {
   const centsDigits = decPart.padEnd(3, '0').slice(0, 3);
   const roundedCents = parseInt(centsDigits.slice(0, 2), 10) + (Number(centsDigits[2]) >= 5 ? 1 : 0);
   const abs = parseInt(intPart, 10) * 100 + roundedCents;
+  // FIX: 9
+  if (!allowNegative && sign < 0) {
+    throw Object.assign(new Error('amount must be a positive number'), { statusCode: 400 });
+  }
   if (abs === 0 && amount !== 0) {
     throw Object.assign(new Error('amount is too small to represent in cents'), { statusCode: 400 });
+  }
+  if (!allowZero && abs === 0) {
+    throw Object.assign(new Error('amount must be a finite number'), { statusCode: 400 });
   }
   return sign * abs;
 }
@@ -96,5 +109,6 @@ module.exports = {
   amountToCents,
   centsToAmount,
   computeBalanceDelta,
+  parseBoolField,
   serializeMoney,
 };

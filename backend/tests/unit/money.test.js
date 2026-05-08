@@ -12,10 +12,22 @@ describe('money utilities', () => {
       [10.50, 1050],
       [0.01, 1],
       ['10.50', 1050],
-      [-10.50, -1050],
       [0, 0],
     ])('converts %p to %p cents', (input, expected) => {
       expect(amountToCents(input)).toBe(expected);
+    });
+
+    test('converts negative amounts when explicitly allowed', () => {
+      expect(amountToCents(-10.50, { allowNegative: true })).toBe(-1050);
+    });
+
+    test('throws a 400-coded error for negative amounts by default', () => {
+      expect(() => amountToCents(-10.50)).toThrow('amount must be a positive number');
+      try {
+        amountToCents(-10.50);
+      } catch (error) {
+        expect(error.statusCode).toBe(400);
+      }
     });
 
     test.each([

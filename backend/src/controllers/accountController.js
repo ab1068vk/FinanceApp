@@ -78,11 +78,12 @@ function moveAccountTransactionsToCash(accountId, userId) {
     const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
-    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
+    // FIX: 5
+    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ?')
+    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ?')
+    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
       .run(cashAccount.id, updatedAt, accountId, userId);
 
     updateStoredBalance(accountId, userId, -movedDelta);
@@ -94,7 +95,8 @@ function moveAccountTransactionsToCash(accountId, userId) {
 
 function createAccount(req, res, next) {
   try {
-    const initialBalance = amountToCents(req.body.balance || 0);
+    const initialBalance = amountToCents(req.body.balance || 0, { allowNegative: true });
+    // FIX: 9
     const hasOverdraftLimit = Object.prototype.hasOwnProperty.call(req.body, 'overdraft_limit');
     const overdraftLimit = hasOverdraftLimit ? normalizeOverdraftLimit(req.body.overdraft_limit) : null;
     if (overdraftLimit !== null && NON_NEGATIVE_ACCOUNT_TYPES.has(req.body.type) && initialBalance < -overdraftLimit) {
