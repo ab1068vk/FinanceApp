@@ -10,7 +10,7 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { amountToCents, serializeMoney } = require('../utils/money');
+const { amountToCents, computeBalanceDelta, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { deliverAdminTemporaryPassword } = require('../utils/passwordResetDelivery');
@@ -328,14 +328,6 @@ function userDateFilters(req, column, params) {
   return where;
 }
 
-function transactionDelta(transaction) {
-  const amount = Number(transaction.amount || 0);
-  if (transaction.type === 'income') return amount;
-  if (transaction.type === 'expense') return -amount;
-  if (transaction.type === 'transfer') return transaction.transfer_direction === 'destination' ? amount : -amount;
-  return 0;
-}
-
 function updateStoredBalance(accountId, userId, delta) {
   if (!accountId) return;
   db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?').run(delta, nowIso(), accountId, userId);
@@ -362,7 +354,7 @@ function deleteAccountTransactions(accountId, userId) {
   return db.transaction(() => {
     const transactions = transactionsForAccountDelete(accountId, userId);
     for (const transaction of transactions) {
-      updateStoredBalance(transaction.account_id, userId, -transactionDelta(transaction));
+      updateStoredBalance(transaction.account_id, userId, -computeBalanceDelta(transaction));
       db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(transaction.id, userId);
     }
     return transactions.length;
@@ -376,7 +368,7 @@ function moveAccountTransactionsToCash(accountId, userId) {
     if (cashAccount.id === accountId) throw Object.assign(new Error('The default cash account cannot be attached to itself'), { statusCode: 400 });
 
     const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
-    const movedDelta = direct.reduce((sum, transaction) => sum + transactionDelta(transaction), 0);
+    const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
     db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
@@ -448,7 +440,7 @@ function getDashboardStats(req, res, next) {
         COUNT(*) AS total
       FROM users
     `).get();
-    const transactionTotals = db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum FROM transactions').get();
+    const transactionTotals = db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum FROM transactions WHERE admin_deleted_at IS NULL').get();
     const totalAccounts = db.prepare('SELECT COUNT(*) AS count FROM accounts').get().count;
     const deletedUsersCount = db.prepare('SELECT COUNT(*) AS count FROM deleted_users').get().count;
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
@@ -1228,7 +1220,7 @@ function adminSoftDeleteTransaction(req, res, next) {
     const deletedAt = nowIso();
     db.transaction(() => {
       for (const item of related) {
-        updateStoredBalance(item.account_id, item.user_id, -transactionDelta(item));
+        updateStoredBalance(item.account_id, item.user_id, -computeBalanceDelta(item));
         db.prepare(`
           UPDATE transactions
           SET admin_deleted_at = ?, admin_deleted_by = ?, admin_delete_reason = ?, updated_at = ?

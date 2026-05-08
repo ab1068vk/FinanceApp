@@ -151,7 +151,7 @@ function processRule(rule, today) {
   });
   void sendPushNotification(
     rule.user_id,
-    `Recurring payment: ${rule.description || 'Recurring transaction'} ${Number(rule.amount).toFixed(2)}`,
+    `Recurring payment: ${rule.description || 'Recurring transaction'} ${(Number(rule.amount) / 100).toFixed(2)}`,
     `${rule.description || 'Recurring transaction'} posted to your account.`,
     { type: 'recurring_transaction', transactionId: transaction.id }
   ).catch((pushError) => logger.warn('Recurring transaction push failed', { userId: rule.user_id, error: pushError.message }));

@@ -24,8 +24,10 @@ function safeDate(date: string) {
 
 export function TransactionListItem({ transaction, onPress, onLongPress, selected = false, selectionMode = false }: Props) {
   const theme = useTheme();
-  const isIncome = transaction.type === 'income';
-  const color = isIncome ? theme.colors.success : theme.colors.danger;
+  const isPositive =
+    transaction.type === 'income' ||
+    (transaction.type === 'transfer' && transaction.transfer_direction === 'destination');
+  const color = isPositive ? theme.colors.success : theme.colors.danger;
   const categoryName = String(transaction.category_name || transaction.type || 'Transaction');
   const description = transaction.description || categoryName;
 
@@ -40,14 +42,14 @@ export function TransactionListItem({ transaction, onPress, onLongPress, selecte
         <Feather name={selected ? 'check-square' : 'square'} size={22} color={selected ? theme.colors.accent : '#ADB5BD'} style={styles.checkbox} />
       ) : null}
       <View style={[styles.iconCircle, { backgroundColor: `${color}18` }]}> 
-        <Feather name={isIncome ? 'arrow-up-right' : 'arrow-down-left'} size={20} color={color} />
+        <Feather name={isPositive ? 'arrow-up-right' : 'arrow-down-left'} size={20} color={color} />
       </View>
       <View style={styles.center}>
         <Text style={styles.description} numberOfLines={1}>{description}</Text>
         <Text style={styles.category} numberOfLines={1}>{categoryName}</Text>
       </View>
       <View style={styles.right}>
-        <Text style={[styles.amount, { color }]}>{isIncome ? '+' : '-'}{formatCurrency(transaction.amount)}</Text>
+        <Text style={[styles.amount, { color }]}>{isPositive ? '+' : '-'}{formatCurrency(transaction.amount)}</Text>
         <Text style={styles.date}>{safeDate(transaction.date)}</Text>
       </View>
     </TouchableOpacity>

@@ -37,7 +37,7 @@ function warnIfAccountBalanceMismatch(account, context = {}) {
   if (!Number.isFinite(balance) || !Number.isFinite(currentBalance)) return;
 
   const difference = balance - currentBalance;
-  if (Math.abs(difference) > 0.01) {
+  if (Math.abs(difference) > 0) {
     logger.warn('Account balance mismatch', {
       accountId: account.id,
       userId: account.user_id,

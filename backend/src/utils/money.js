@@ -48,8 +48,15 @@ function centsToAmount(value) {
   return Math.round(cents) / 100;
 }
 
-function moneySql(column) {
-  return `ROUND(${column} / 100.0, 2)`;
+function computeBalanceDelta(transaction) {
+  const amount = Number(transaction.amount || 0);
+  if (transaction.type === 'income') return amount;
+  if (transaction.type === 'expense') return -amount;
+  if (transaction.type === 'transfer') {
+    const dir = transaction.transfer_direction ?? null;
+    return dir === 'destination' ? amount : -amount;
+  }
+  return 0;
 }
 
 function serializeMoney(value, key = '') {
@@ -66,6 +73,6 @@ function serializeMoney(value, key = '') {
 module.exports = {
   amountToCents,
   centsToAmount,
-  moneySql,
+  computeBalanceDelta,
   serializeMoney,
 };

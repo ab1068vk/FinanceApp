@@ -1,10 +1,11 @@
 const crypto = require('crypto');
 const { db } = require('../../database/db');
+const logger = require('../utils/logger');
 const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { accountCurrentBalanceExpr, warnIfAccountBalanceMismatch } = require('../utils/accountBalance');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { amountToCents, serializeMoney } = require('../utils/money');
+const { amountToCents, computeBalanceDelta, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
 
 const NON_NEGATIVE_ACCOUNT_TYPES = new Set(['checking', 'savings', 'cash']);
@@ -22,17 +23,10 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
 
 const balanceExpr = accountCurrentBalanceExpr('accounts');
 
-function transactionBalanceDelta(transaction) {
-  const amount = Number(transaction.amount || 0);
-  if (transaction.type === 'income') return amount;
-  if (transaction.type === 'expense') return -amount;
-  if (transaction.type === 'transfer') {
-    return transaction.transfer_direction === 'destination' ? amount : -amount;
-  }
-  return 0;
-}
-
 function updateStoredBalance(accountId, userId, delta) {
+  if (!db.inTransaction) {
+    logger.warn('Account balance updated outside transaction', { accountId, userId, delta });
+  }
   db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(delta, nowIso(), accountId, userId);
 }
@@ -58,7 +52,7 @@ function deleteAccountTransactions(accountId, userId) {
   return db.transaction(() => {
     const transactions = transactionsForAccountDelete(accountId, userId);
     for (const transaction of transactions) {
-      updateStoredBalance(transaction.account_id, userId, -transactionBalanceDelta(transaction));
+      updateStoredBalance(transaction.account_id, userId, -computeBalanceDelta(transaction));
       db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(transaction.id, userId);
     }
     return transactions.length;
@@ -76,7 +70,7 @@ function moveAccountTransactionsToCash(accountId, userId) {
     }
 
     const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
-    const movedDelta = direct.reduce((sum, transaction) => sum + transactionBalanceDelta(transaction), 0);
+    const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
     db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ?')
@@ -121,7 +115,7 @@ function createAccount(req, res, next) {
       db.prepare(`INSERT INTO accounts (id, user_id, name, type, balance, overdraft_limit, currency, color, icon, is_active, created_at, updated_at)
         VALUES (@id, @user_id, @name, @type, @balance, @overdraft_limit, @currency, @color, @icon, @is_active, @created_at, @updated_at)`).run(account);
 
-      if (Math.abs(initialBalance) > 0.001) {
+      if (initialBalance !== 0) {
         db.prepare(`INSERT INTO transactions (id, user_id, account_id, category_id, type, amount, description, note, date, recurring, recurring_interval, receipt_path, tags, transfer_group_id, transfer_direction, created_at, updated_at)
           VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, 0, NULL, NULL, ?, NULL, NULL, ?, NULL)`).run(
           crypto.randomUUID(),
@@ -170,13 +164,12 @@ function updateAccount(req, res, next) {
     const oldAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ? AND is_active = 1').get(req.params.id, req.user.id);
     if (!oldAccount) return res.status(404).json({ error: 'Account not found' });
 
-    const allowed = ['name', 'color', 'icon', 'currency', 'balance', 'overdraft_limit'];
+    const allowed = ['name', 'color', 'icon', 'currency', 'overdraft_limit'];
     const updates = {};
     for (const field of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         if (field === 'currency') updates[field] = req.body[field].toUpperCase();
         else if (field === 'overdraft_limit') updates[field] = Math.max(amountToCents(req.body[field] || 0), 0);
-        else if (field === 'balance') updates[field] = amountToCents(req.body[field] || 0);
         else updates[field] = req.body[field];
       }
     }

@@ -8,7 +8,7 @@ const {
   warnIfAccountBalanceMismatch,
 } = require('../utils/accountBalance');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { amountToCents, centsToAmount, serializeMoney } = require('../utils/money');
+const { amountToCents, centsToAmount, computeBalanceDelta, serializeMoney } = require('../utils/money');
 const { sendPushNotification } = require('../utils/pushNotifications');
 
 const MAX_TRANSACTION_AMOUNT = 100000000;
@@ -65,18 +65,6 @@ function parseTags(tags) {
 }
 function getTransferGroupId(transaction) {
   return transaction.transfer_group_id || null;
-}
-function getTransferDirection(transaction) {
-  return transaction.transfer_direction || null;
-}
-
-function balanceDelta(transaction) {
-  if (transaction.type === 'income') return transaction.amount;
-  if (transaction.type === 'expense') return -transaction.amount;
-  if (transaction.type === 'transfer') {
-    return getTransferDirection(transaction) === 'destination' ? transaction.amount : -transaction.amount;
-  }
-  return 0;
 }
 
 function overdraftLimit(account) {
@@ -149,13 +137,13 @@ function notifyBudgetOverspendIfNeeded(userId, transaction) {
           AND t.type = 'expense'
           AND t.admin_deleted_at IS NULL
           AND datetime(t.date) >= datetime(b.start_date)
-          AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date))), 0) AS spent
+          AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date, '+1 day', '-1 second'))), 0) AS spent
     FROM budgets b
     LEFT JOIN categories c ON c.id = b.category_id
     WHERE b.user_id = ?
       AND b.category_id = ?
       AND datetime(?) >= datetime(b.start_date)
-      AND (b.end_date IS NULL OR datetime(?) <= datetime(b.end_date))
+      AND (b.end_date IS NULL OR datetime(?) <= datetime(b.end_date, '+1 day', '-1 second'))
     ORDER BY b.created_at DESC
     LIMIT 1
   `).get(userId, transaction.category_id, transaction.date, transaction.date);
@@ -231,9 +219,9 @@ function createTransaction(req, res, next) {
         audit(req, 'TRANSACTION_CREATED', 'transaction', sourceTx.id, null, { source: sourceTx, destination: destTx });
         created.push(sourceTx, destTx);
       } else {
-        assertBalanceAllowed(account, balanceDelta(base));
+        assertBalanceAllowed(account, computeBalanceDelta(base));
         insertTransaction(base);
-        updateBalance(account.id, req.user.id, balanceDelta(base));
+        updateBalance(account.id, req.user.id, computeBalanceDelta(base));
         checkAccountConsistency(account.id, req.user.id, 'createTransaction');
         audit(req, 'TRANSACTION_CREATED', 'transaction', base.id, null, base);
         created.push(base);
@@ -343,12 +331,12 @@ function updateTransaction(req, res, next) {
           for (const item of related) {
             const account = getOwnedAccount(item.account_id, req.user.id);
             if (!account) throw Object.assign(new Error('Transfer account is unavailable'), { statusCode: 409 });
-            const delta = balanceDelta({ ...item, amount: nextAmount }) - balanceDelta(item);
+            const delta = computeBalanceDelta({ ...item, amount: nextAmount }) - computeBalanceDelta(item);
             assertBalanceAllowed(account, delta);
           }
 
           for (const item of related) {
-            const delta = balanceDelta({ ...item, amount: nextAmount }) - balanceDelta(item);
+            const delta = computeBalanceDelta({ ...item, amount: nextAmount }) - computeBalanceDelta(item);
             updateBalance(item.account_id, req.user.id, delta);
           }
 
@@ -358,7 +346,7 @@ function updateTransaction(req, res, next) {
         } else {
           const account = getOwnedAccount(oldTx.account_id, req.user.id);
           if (!account) throw Object.assign(new Error('Transaction account is unavailable'), { statusCode: 409 });
-          const delta = balanceDelta({ ...oldTx, amount: nextAmount }) - balanceDelta(oldTx);
+          const delta = computeBalanceDelta({ ...oldTx, amount: nextAmount }) - computeBalanceDelta(oldTx);
           assertBalanceAllowed(account, delta);
           updateBalance(oldTx.account_id, req.user.id, delta);
           updates.amount = nextAmount;
@@ -402,7 +390,7 @@ function deleteTransaction(req, res, next) {
     const affectedAccountIds = Array.from(new Set(related.map((item) => item.account_id).filter(Boolean)));
     db.transaction(() => {
       for (const item of related) {
-        if (item.account_id) updateBalance(item.account_id, req.user.id, -balanceDelta(item));
+        if (item.account_id) updateBalance(item.account_id, req.user.id, -computeBalanceDelta(item));
         db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(item.id, req.user.id);
       }
       affectedAccountIds.forEach((accountId) => checkAccountConsistency(accountId, req.user.id, 'deleteTransaction'));
@@ -508,7 +496,7 @@ function bulkDeleteTransactions(req, res, next) {
 
     db.transaction(() => {
       for (const item of related) {
-        if (item.account_id) updateBalance(item.account_id, req.user.id, -balanceDelta(item));
+        if (item.account_id) updateBalance(item.account_id, req.user.id, -computeBalanceDelta(item));
         db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(item.id, req.user.id);
       }
       affectedAccountIds.forEach((accountId) => checkAccountConsistency(accountId, req.user.id, 'bulkDeleteTransactions'));
