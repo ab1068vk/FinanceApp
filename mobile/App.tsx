@@ -81,6 +81,8 @@ function AppBootstrap() {
           }
         }
         await dispatch(loadStoredAuth()).unwrap();
+      } catch (err) {
+        console.warn('Auth restore failed', err);
       } finally {
         clearTimeout(restoreTimeout);
         if (mounted) {
@@ -98,9 +100,11 @@ function AppBootstrap() {
   }, [dispatch]);
 
   useEffect(() => {
-    void Linking.getInitialURL().then((url) => {
-      pendingInitialUrl.current = url;
-    });
+    void Linking.getInitialURL()
+      .then((url) => {
+        pendingInitialUrl.current = url;
+      })
+      .catch((err) => console.warn('Initial URL fetch failed', err));
 
     const subscription = Linking.addEventListener('url', ({ url }) => {
       const deepLink = parseFinanceDeepLink(url);
@@ -140,14 +144,16 @@ function AppBootstrap() {
 }, [isLocked]);
 
   useEffect(() => {
-    void detectRootedOrJailbrokenDevice().then((suspicious) => {
-      if (suspicious) {
-        Alert.alert(
-          'Security Notice',
-          'This device appears to be rooted or jailbroken. For your security, some features may be restricted.'
-        );
-      }
-    });
+    void detectRootedOrJailbrokenDevice()
+      .then((suspicious) => {
+        if (suspicious) {
+          Alert.alert(
+            'Security Notice',
+            'This device appears to be rooted or jailbroken. For your security, some features may be restricted.'
+          );
+        }
+      })
+      .catch((err) => console.warn('Root detection failed', err));
   }, []);
 
   useEffect(() => {
@@ -164,7 +170,7 @@ function AppBootstrap() {
           ? process.env.EXPO_PUBLIC_APP_STORE_URL
           : process.env.EXPO_PUBLIC_PLAY_STORE_URL;
         const openStore = () => {
-          if (storeUrl) void Linking.openURL(storeUrl);
+          if (storeUrl) void Linking.openURL(storeUrl).catch((err) => console.warn('openURL failed', err));
         };
 
         if (compareVersions(currentVersion, minVersion) < 0) {
@@ -192,9 +198,11 @@ function AppBootstrap() {
       dispatch(uiActions.setOnline(Boolean(state.isConnected && state.isInternetReachable !== false)));
     });
 
-    void NetInfo.fetch().then((state) => {
-      dispatch(uiActions.setOnline(Boolean(state.isConnected && state.isInternetReachable !== false)));
-    });
+    void NetInfo.fetch()
+      .then((state) => {
+        dispatch(uiActions.setOnline(Boolean(state.isConnected && state.isInternetReachable !== false)));
+      })
+      .catch((err) => console.warn('NetInfo fetch failed', err));
 
     return unsubscribe;
   }, [dispatch]);
@@ -208,7 +216,7 @@ function AppBootstrap() {
         stack: reason.stack,
         screen: 'global',
         platform: 'react-native',
-      });
+      }).catch((err) => console.warn('Client error report failed', err));
     };
 
     globalThis.addEventListener?.('unhandledrejection', handler);
@@ -243,20 +251,24 @@ function AppBootstrap() {
       if (!lastBackgroundAt.current || !isAuthenticated) return;
 
       void (async () => {
-        const preference = await getAutoLockPreference();
-        const timeoutMs = autoLockTimeoutMs(preference);
-        const wasAwayMs = Date.now() - lastBackgroundAt.current!;
-        lastBackgroundAt.current = null;
-        if (timeoutMs !== null && wasAwayMs > timeoutMs) {
-          setIsLocked(true);
-        }
-
-        if (isJwtExpired(accessToken)) {
-          try {
-            await dispatch(refreshAccessToken()).unwrap();
-          } catch {
-            showToast({ type: 'error', text1: 'Your session expired. Please log in.' });
+        try {
+          const preference = await getAutoLockPreference();
+          const timeoutMs = autoLockTimeoutMs(preference);
+          const wasAwayMs = Date.now() - lastBackgroundAt.current!;
+          lastBackgroundAt.current = null;
+          if (timeoutMs !== null && wasAwayMs > timeoutMs) {
+            setIsLocked(true);
           }
+
+          if (isJwtExpired(accessToken)) {
+            try {
+              await dispatch(refreshAccessToken()).unwrap();
+            } catch {
+              showToast({ type: 'error', text1: 'Your session expired. Please log in.' });
+            }
+          }
+        } catch (err) {
+          console.warn('AppState async IIFE failed', err);
         }
       })();
     });
@@ -321,7 +333,7 @@ function PrivacyOverlay() {
 function UpdateBanner({ onDismiss }: { onDismiss: () => void }) {
   const openStore = () => {
     const storeUrl = Platform.OS === 'ios' ? process.env.EXPO_PUBLIC_APP_STORE_URL : process.env.EXPO_PUBLIC_PLAY_STORE_URL;
-    if (storeUrl) void Linking.openURL(storeUrl);
+    if (storeUrl) void Linking.openURL(storeUrl).catch((err) => console.warn('openURL failed', err));
   };
 
   return (

@@ -18,8 +18,10 @@ export function formatRelativeDate(date: string | Date) {
 }
 
 export function formatPercent(value = 0, total = 0) {
-  if (!total) return '0.0%';
-  return `${((Number(value) / Number(total)) * 100).toFixed(1)}%`;
+  const n = Number(value);
+  const t = Number(total);
+  if (!Number.isFinite(n) || !Number.isFinite(t) || t === 0) return '0.0%';
+  return `${((n / t) * 100).toFixed(1)}%`;
 }
 
 export function truncateText(text = '', maxLength = 24) {

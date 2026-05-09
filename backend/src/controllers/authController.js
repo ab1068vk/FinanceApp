@@ -410,41 +410,6 @@ async function login(req, res, next) {
 function refreshToken(req, res, next) {
   try {
     const tokenHash = hashToken(req.body.refreshToken);
-    const storedToken = db.prepare(`
-      SELECT refresh_tokens.*, users.email, users.role, users.is_active, users.must_change_password, users.security_stamp
-      FROM refresh_tokens
-      JOIN users ON users.id = refresh_tokens.user_id
-      WHERE refresh_tokens.token_hash = ?
-    `).get(tokenHash);
-
-    if (!storedToken) {
-      return res.status(401).json({ error: 'Invalid refresh token' });
-    }
-
-    if (storedToken.revoked) {
-      const rootId = storedToken.family_id || storedToken.id;
-      if (!rootId) {
-        logger.warn('Revoked refresh token missing family root id', { tokenId: storedToken.id, userId: storedToken.user_id });
-        return res.status(401).json({ error: 'Invalid refresh token' });
-      }
-      db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ? OR family_id = ?').run(rootId, rootId);
-      writeSecurityLog(req, {
-        userId: storedToken.user_id,
-        action: 'SECURITY_REFRESH_TOKEN_REUSE',
-        newValue: { family_id: rootId },
-      });
-      return res.status(401).json({ error: 'Invalid refresh token' });
-    }
-
-    if (!storedToken.is_active) {
-      return res.status(401).json({ error: 'Invalid refresh token' });
-    }
-
-    if (new Date(storedToken.expires_at).getTime() <= Date.now()) {
-      db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(storedToken.id);
-      return res.status(401).json({ error: 'Invalid refresh token' });
-    }
-
     const nextRefreshToken = generateRefreshToken();
     const nextRefreshTokenHash = hashToken(nextRefreshToken);
     const createdAt = nowIso();
@@ -452,7 +417,31 @@ function refreshToken(req, res, next) {
     let accessToken;
 
     db.transaction(() => {
-      db.prepare('UPDATE refresh_tokens SET revoked = 1, last_used_at = ? WHERE id = ?').run(createdAt, storedToken.id);
+      const storedToken = db.prepare(`
+        SELECT refresh_tokens.*, users.email, users.role, users.is_active, users.must_change_password, users.security_stamp
+        FROM refresh_tokens
+        JOIN users ON users.id = refresh_tokens.user_id
+        WHERE refresh_tokens.token_hash = ?
+          AND refresh_tokens.revoked = 0
+      `).get(tokenHash);
+
+      if (!storedToken) {
+        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+      }
+
+      if (!storedToken.is_active) {
+        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+      }
+
+      if (new Date(storedToken.expires_at).getTime() <= Date.now()) {
+        db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(storedToken.id);
+        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+      }
+
+      const revokeResult = db.prepare('UPDATE refresh_tokens SET revoked = 1, last_used_at = ? WHERE id = ? AND revoked = 0').run(createdAt, storedToken.id);
+      if (revokeResult.changes !== 1) {
+        throw Object.assign(new Error('Refresh token was already rotated'), { statusCode: 409 });
+      }
       db.prepare(`
         INSERT INTO refresh_tokens (id, user_id, family_id, token_hash, expires_at, created_at, last_used_at, user_agent, revoked)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -477,11 +466,15 @@ function logout(req, res, next) {
   try {
     const tokenHash = hashToken(req.body.refreshToken);
 
-    db.prepare(`
+    const result = db.prepare(`
       UPDATE refresh_tokens
       SET revoked = 1
       WHERE token_hash = ? AND user_id = ?
     `).run(tokenHash, req.user.id);
+
+    if (result.changes === 0) {
+      return res.status(400).json({ error: 'Refresh token not found or already revoked' });
+    }
 
     blockAccessToken(req.auth?.jti, req.auth?.exp);
 
@@ -575,6 +568,10 @@ async function resetPassword(req, res, next) {
         WHERE password_reset_tokens.token_hash = ?
       `).get(tokenHash);
 
+      if (!storedToken) {
+        throw Object.assign(new Error('Token record missing after update'), { statusCode: 500 });
+      }
+
       db.prepare(`
         UPDATE users
         SET password_hash = ?, must_change_password = 0, security_stamp = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = ?
@@ -627,6 +624,10 @@ async function verifyEmail(req, res, next) {
         JOIN users ON users.id = email_verification_tokens.user_id
         WHERE email_verification_tokens.token_hash = ?
       `).get(tokenHash);
+
+      if (!storedToken) {
+        throw Object.assign(new Error('Token record missing after update'), { statusCode: 500 });
+      }
 
       db.prepare('UPDATE users SET email_verified_at = ?, updated_at = ? WHERE id = ?')
         .run(verifiedAt, verifiedAt, storedToken.user_id);
@@ -802,12 +803,14 @@ function updateNotificationSettings(req, res, next) {
     const updates = req.body.preferences || {};
     const update = db.prepare('UPDATE notification_preferences SET enabled = ?, updated_at = ? WHERE user_id = ? AND type = ?');
     const updatedAt = nowIso();
-    Object.keys(DEFAULT_PREFS).forEach((type) => {
-      if (Object.prototype.hasOwnProperty.call(updates, type)) {
-        update.run(parseBoolField(updates[type]), updatedAt, req.user.id, type);
-        // FIX: 4
-      }
-    });
+    db.transaction(() => {
+      Object.keys(DEFAULT_PREFS).forEach((type) => {
+        if (Object.prototype.hasOwnProperty.call(updates, type)) {
+          update.run(parseBoolField(updates[type]), updatedAt, req.user.id, type);
+          // FIX: 4
+        }
+      });
+    })();
     return getNotificationSettings(req, res, next);
   } catch (error) {
     return next(error);

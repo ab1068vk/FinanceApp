@@ -84,7 +84,7 @@ export default function BudgetDetailScreen({ route }: Props) {
   const amount = Number(budget?.amount || 0);
   const spent = Number(budget?.current_spending || 0);
   const remaining = Number(budget?.remaining ?? amount - spent);
-  const ratio = amount > 0 ? spent / amount : 0;
+  const ratio = (Number.isFinite(spent) && Number.isFinite(amount) && amount > 0) ? spent / amount : 0;
   const color = category?.color || budget?.category_color || progressColor(ratio);
   const icon = featherIconName(category?.icon || budget?.category_icon, 'pie-chart');
   const categoryName = category?.name || budget?.category_name || 'Budget';
@@ -140,7 +140,7 @@ export default function BudgetDetailScreen({ route }: Props) {
         </View>
 
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.min(ratio, 1) * 100}%`, backgroundColor: color }]} />
+          <View style={[styles.progressFill, { width: `${Math.min(Math.max(ratio, 0), 1) * 100}%`, backgroundColor: color }]} />
         </View>
 
         <Text style={[styles.remainingText, { color: remaining >= 0 ? '#27AE60' : '#E74C3C' }]}>

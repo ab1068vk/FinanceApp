@@ -20,12 +20,20 @@ function nowIso() { return new Date().toISOString(); }
 function rangeStartIso(value) {
   const raw = String(value || '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T00:00:00.000Z`;
-  return new Date(raw).toISOString();
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw Object.assign(new Error(`Invalid date: ${raw}`), { statusCode: 400 });
+  }
+  return date.toISOString();
 }
 function rangeEndIso(value) {
   const raw = String(value || '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T23:59:59.999Z`;
-  return new Date(raw).toISOString();
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw Object.assign(new Error(`Invalid date: ${raw}`), { statusCode: 400 });
+  }
+  return date.toISOString();
 }
 function paginationMeta(page, limit, total) {
   const totalPages = Math.ceil(total / limit);
@@ -70,7 +78,8 @@ function getTransferGroupId(transaction) {
 
 function overdraftLimit(account) {
   if (account?.overdraft_limit === null || account?.overdraft_limit === undefined) return null;
-  return Math.max(Number(account.overdraft_limit || 0), 0);
+  const rawLimit = Number(account.overdraft_limit);
+  return Number.isFinite(rawLimit) ? Math.max(rawLimit, 0) : 0;
 }
 
 function assertTransactionAmount(amount) {

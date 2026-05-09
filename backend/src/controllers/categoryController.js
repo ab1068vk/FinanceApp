@@ -73,9 +73,11 @@ function createCategory(req, res, next) {
       color: req.body.color || null, type: req.body.type, is_default: 0, is_system: 0, is_active: 1,
       sort_order: maxOrder.max_order + 10, created_at: nowIso(),
     };
-    db.prepare(`INSERT INTO categories (id, user_id, name, icon, color, type, is_default, is_system, is_active, sort_order, created_at)
-      VALUES (@id, @user_id, @name, @icon, @color, @type, @is_default, @is_system, @is_active, @sort_order, @created_at)`).run(category);
-    audit(req, 'CATEGORY_CREATED', 'category', category.id, null, category);
+    db.transaction(() => {
+      db.prepare(`INSERT INTO categories (id, user_id, name, icon, color, type, is_default, is_system, is_active, sort_order, created_at)
+        VALUES (@id, @user_id, @name, @icon, @color, @type, @is_default, @is_system, @is_active, @sort_order, @created_at)`).run(category);
+      audit(req, 'CATEGORY_CREATED', 'category', category.id, null, category);
+    })();
     return res.status(201).json(serializeMoney(category));
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Category already exists' });
@@ -95,9 +97,12 @@ function updateCategory(req, res, next) {
     const nextType = Object.prototype.hasOwnProperty.call(updates, 'type') ? updates.type : oldCategory.type;
     if (categoryNameExists(req.user.id, nextName, nextType, req.params.id)) return res.status(409).json({ error: 'Category already exists' });
     const setSql = Object.keys(updates).map((field) => `${field} = @${field}`).join(', ');
-    db.prepare(`UPDATE categories SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
-    const newCategory = db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
-    audit(req, 'CATEGORY_UPDATED', 'category', req.params.id, oldCategory, newCategory);
+    let newCategory;
+    db.transaction(() => {
+      db.prepare(`UPDATE categories SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
+      newCategory = db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+      audit(req, 'CATEGORY_UPDATED', 'category', req.params.id, oldCategory, newCategory);
+    })();
     return res.json(serializeMoney(newCategory));
   } catch (error) { return next(error); }
 }
@@ -124,8 +129,10 @@ function deleteCategory(req, res, next) {
   try {
     const category = db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
     if (!category) return res.status(404).json({ error: 'Category not found' });
-    db.prepare('DELETE FROM categories WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
-    audit(req, 'CATEGORY_DELETED', 'category', req.params.id, category, null);
+    db.transaction(() => {
+      db.prepare('DELETE FROM categories WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+      audit(req, 'CATEGORY_DELETED', 'category', req.params.id, category, null);
+    })();
     return res.json({ success: true });
   } catch (error) { return next(error); }
 }

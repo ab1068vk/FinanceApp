@@ -111,7 +111,10 @@ export default function AddTransactionScreen({ navigation, route }: Props) {
 
   const amountNumber = Number(amount || '0');
   const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accountId, accounts]);
-  const amountDisplay = useMemo(() => `$${amountNumber.toFixed(2)}`, [amountNumber]);
+  const amountDisplay = useMemo(() => {
+    const n = Number(amountNumber);
+    return `$${Number.isFinite(n) ? n.toFixed(2) : '0.00'}`;
+  }, [amountNumber]);
   const categoryUsage = useMemo(() => {
     const usage = new Map<string, CategoryUsage>();
     transactions.forEach((transaction) => {

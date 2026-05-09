@@ -191,9 +191,12 @@ function updateAccount(req, res, next) {
 
     updates.updated_at = nowIso();
     const setSql = Object.keys(updates).map((field) => `${field} = @${field}`).join(', ');
-    db.prepare(`UPDATE accounts SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
-    const newAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
-    audit(req, 'ACCOUNT_UPDATED', 'account', req.params.id, oldAccount, newAccount);
+    let newAccount;
+    db.transaction(() => {
+      db.prepare(`UPDATE accounts SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
+      newAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+      audit(req, 'ACCOUNT_UPDATED', 'account', req.params.id, oldAccount, newAccount);
+    })();
     return res.json(serializeMoney(newAccount));
   } catch (error) { return next(error); }
 }

@@ -51,7 +51,12 @@ function amountToCents(value, { allowZero = true, allowNegative = false } = {}) 
   const [intPart, decPart = ''] = String(raw).replace('-', '').split('.');
   const centsDigits = decPart.padEnd(3, '0').slice(0, 3);
   const roundedCents = parseInt(centsDigits.slice(0, 2), 10) + (Number(centsDigits[2]) >= 5 ? 1 : 0);
-  const abs = parseInt(intPart, 10) * 100 + roundedCents;
+  const MAX_CENTS = 999_999_999_999_99;
+  const absCents = BigInt(intPart || '0') * 100n + BigInt(roundedCents);
+  if (absCents > BigInt(MAX_CENTS)) {
+    throw Object.assign(new Error('Amount exceeds maximum allowed value'), { statusCode: 400 });
+  }
+  const abs = Number(absCents);
   // FIX: 9
   if (!allowNegative && sign < 0) {
     throw Object.assign(new Error('amount must be a positive number'), { statusCode: 400 });
@@ -74,6 +79,9 @@ function centsToAmount(value) {
 
 function computeBalanceDelta(transaction) {
   const amount = Number(transaction.amount || 0);
+  if (!Number.isFinite(amount)) {
+    throw new Error(`Invalid transaction amount: ${transaction.amount}`);
+  }
   if (transaction.type === 'income') return amount;
   if (transaction.type === 'expense') return -amount;
   if (transaction.type === 'transfer') {

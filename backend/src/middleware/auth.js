@@ -38,9 +38,16 @@ function authenticateApiToken(token, req, res, next) {
     apiTokenLastUsedWritten.set(row.token_id, nowMs);
   }
   const { token_id: tokenId, scopes, ...user } = row;
+  let parsedScopes = [];
+  try {
+    parsedScopes = JSON.parse(scopes || '[]');
+    if (!Array.isArray(parsedScopes)) parsedScopes = [];
+  } catch {
+    parsedScopes = [];
+  }
   req.auth = {
     api_token_id: tokenId,
-    scopes: JSON.parse(scopes || '[]'),
+    scopes: parsedScopes,
     sub: user.id,
     token_type: 'admin_api_token',
   };

@@ -53,6 +53,12 @@ function normalizeBudgetDates(period, startDateValue, endDateValue = null) {
   const startDate = new Date(startDateValue);
   const endDate = endDateValue ? new Date(endDateValue) : null;
 
+  if (Number.isNaN(startDate.getTime())) {
+    throw Object.assign(new Error(`Invalid date: ${startDateValue}`), { statusCode: 400 });
+  }
+  if (endDate && Number.isNaN(endDate.getTime())) {
+    throw Object.assign(new Error(`Invalid date: ${endDateValue}`), { statusCode: 400 });
+  }
   if (endDate && startDate > endDate) {
     throw Object.assign(new Error('end_date must be after start_date'), { statusCode: 400 });
   }
@@ -93,6 +99,9 @@ function assertNoBudgetOverlap(userId, categoryId, startDate, endDate, excludeId
 function budgetPercentUsed(amountValue, currentValue) {
   const amount = Number(amountValue || 0);
   const currentSpending = Number(currentValue || 0);
+  if (!Number.isFinite(currentSpending) || !Number.isFinite(amount) || amount === 0) {
+    return 0;
+  }
   if (amount === 0) return currentSpending > 0 ? 100 : 0;
   return Math.round((currentSpending / amount) * 10000) / 100;
 }
@@ -101,15 +110,17 @@ function createBudget(req, res, next) {
   try {
     if (!allowedCategory(req.body.category_id, req.user.id)) return res.status(400).json({ error: 'category_id is invalid' });
     const dates = normalizeBudgetDates(req.body.period, req.body.start_date, req.body.end_date);
-    assertNoBudgetOverlap(req.user.id, req.body.category_id, dates.start_date, dates.end_date);
     const budget = {
       id: crypto.randomUUID(), user_id: req.user.id, category_id: req.body.category_id, amount: amountToCents(req.body.amount, { allowZero: false }),
       period: req.body.period, start_date: dates.start_date, end_date: dates.end_date,
       created_at: nowIso(), updated_at: null,
     };
-    db.prepare(`INSERT INTO budgets (id, user_id, category_id, amount, period, start_date, end_date, created_at, updated_at)
-      VALUES (@id, @user_id, @category_id, @amount, @period, @start_date, @end_date, @created_at, @updated_at)`).run(budget);
-    audit(req, 'BUDGET_CREATED', 'budget', budget.id, null, budget);
+    db.transaction(() => {
+      assertNoBudgetOverlap(req.user.id, req.body.category_id, dates.start_date, dates.end_date);
+      db.prepare(`INSERT INTO budgets (id, user_id, category_id, amount, period, start_date, end_date, created_at, updated_at)
+        VALUES (@id, @user_id, @category_id, @amount, @period, @start_date, @end_date, @created_at, @updated_at)`).run(budget);
+      audit(req, 'BUDGET_CREATED', 'budget', budget.id, null, budget);
+    })();
     return res.status(201).json(serializeMoney(budget));
   } catch (error) { return next(error); }
 }
@@ -186,18 +197,21 @@ function updateBudget(req, res, next) {
       if (Object.prototype.hasOwnProperty.call(updates, 'end_date')) updates.end_date = dates.end_date;
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No allowed fields provided' });
-    assertNoBudgetOverlap(
-      req.user.id,
-      Object.prototype.hasOwnProperty.call(updates, 'category_id') ? updates.category_id : oldBudget.category_id,
-      Object.prototype.hasOwnProperty.call(updates, 'start_date') ? updates.start_date : oldBudget.start_date,
-      Object.prototype.hasOwnProperty.call(updates, 'end_date') ? updates.end_date : oldBudget.end_date,
-      req.params.id
-    );
     updates.updated_at = nowIso();
     const setSql = Object.keys(updates).map((field) => `${field} = @${field}`).join(', ');
-    db.prepare(`UPDATE budgets SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
-    const newBudget = db.prepare('SELECT * FROM budgets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
-    audit(req, 'BUDGET_UPDATED', 'budget', req.params.id, oldBudget, newBudget);
+    let newBudget;
+    db.transaction(() => {
+      assertNoBudgetOverlap(
+        req.user.id,
+        Object.prototype.hasOwnProperty.call(updates, 'category_id') ? updates.category_id : oldBudget.category_id,
+        Object.prototype.hasOwnProperty.call(updates, 'start_date') ? updates.start_date : oldBudget.start_date,
+        Object.prototype.hasOwnProperty.call(updates, 'end_date') ? updates.end_date : oldBudget.end_date,
+        req.params.id
+      );
+      db.prepare(`UPDATE budgets SET ${setSql} WHERE id = @id AND user_id = @user_id`).run({ ...updates, id: req.params.id, user_id: req.user.id });
+      newBudget = db.prepare('SELECT * FROM budgets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+      audit(req, 'BUDGET_UPDATED', 'budget', req.params.id, oldBudget, newBudget);
+    })();
     return res.json(serializeMoney(newBudget));
   } catch (error) { return next(error); }
 }
@@ -206,8 +220,10 @@ function deleteBudget(req, res, next) {
   try {
     const budget = db.prepare('SELECT * FROM budgets WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
     if (!budget) return res.status(404).json({ error: 'Budget not found' });
-    db.prepare('DELETE FROM budgets WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
-    audit(req, 'BUDGET_DELETED', 'budget', req.params.id, budget, null);
+    db.transaction(() => {
+      db.prepare('DELETE FROM budgets WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+      audit(req, 'BUDGET_DELETED', 'budget', req.params.id, budget, null);
+    })();
     return res.json({ success: true });
   } catch (error) { return next(error); }
 }

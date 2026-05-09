@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const zlib = require('zlib');
 const v8 = require('v8');
 const { db, dbPath } = require('../../database/db');
@@ -42,6 +43,9 @@ function newSecurityStamp() {
 function budgetPercentUsed(amountValue, currentValue) {
   const amount = Number(amountValue || 0);
   const currentSpending = Number(currentValue || 0);
+  if (!Number.isFinite(currentSpending) || !Number.isFinite(amount) || amount === 0) {
+    return 0;
+  }
   if (amount === 0) return currentSpending > 0 ? 100 : 0;
   return Math.round((currentSpending / amount) * 10000) / 100;
 }
@@ -228,7 +232,8 @@ function getDbSizeMb() {
 }
 
 function pagination(req, defaultLimit = 50) {
-  const page = Math.max(Number(req.query.page) || 1, 1);
+  const MAX_PAGE = 10_000;
+  const page = Math.min(Math.max(Number(req.query.page) || 1, 1), MAX_PAGE);
   const limit = Math.min(Math.max(Number(req.query.limit || req.query.page_size) || defaultLimit, 1), 200);
   return { page, limit, offset: (page - 1) * limit };
 }
@@ -642,10 +647,11 @@ function updateUserStatus(req, res, next) {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const isActive = parseBoolField(req.body.is_active);
-    // FIX: 4
-    if (!isActive && wouldRemoveLastActiveAdmin(user)) return res.status(409).json({ error: 'At least one active admin must remain' });
     let updated;
     db.transaction(() => {
+      const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+      if (!currentUser) throw Object.assign(new Error('User not found'), { statusCode: 404 });
+      if (!isActive && wouldRemoveLastActiveAdmin(currentUser)) throw Object.assign(new Error('At least one active admin must remain'), { statusCode: 409 });
       db.prepare('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?').run(isActive, nowIso(), req.params.id);
       if (!isActive) db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(req.params.id);
       updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
@@ -730,10 +736,12 @@ function updateUserRole(req, res, next) {
     if (req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot change your own role' });
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (req.body.role !== 'admin' && wouldRemoveLastActiveAdmin(user)) return res.status(409).json({ error: 'At least one active admin must remain' });
 
     let updated;
     db.transaction(() => {
+      const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+      if (!currentUser) throw Object.assign(new Error('User not found'), { statusCode: 404 });
+      if (req.body.role !== 'admin' && wouldRemoveLastActiveAdmin(currentUser)) throw Object.assign(new Error('At least one active admin must remain'), { statusCode: 409 });
       db.prepare('UPDATE users SET role = ?, security_stamp = ?, updated_at = ? WHERE id = ?').run(req.body.role, newSecurityStamp(), nowIso(), req.params.id);
       db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(req.params.id);
       updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
@@ -793,13 +801,15 @@ function deleteUser(req, res, next) {
     if (req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot delete yourself' });
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (wouldRemoveLastActiveAdmin(user)) return res.status(409).json({ error: 'At least one active admin must remain' });
     const deletedUser = sanitizeUser(user);
     const deletedAt = nowIso();
     const archive = deletedUserSummary(user);
     const archivedId = crypto.randomUUID();
 
     db.transaction(() => {
+      const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+      if (!currentUser) throw Object.assign(new Error('User not found'), { statusCode: 404 });
+      if (wouldRemoveLastActiveAdmin(currentUser)) throw Object.assign(new Error('At least one active admin must remain'), { statusCode: 409 });
       db.prepare(`
         INSERT INTO deleted_users (
           id, original_user_id, email, full_name, role, was_active, created_at, last_login, deleted_at, deleted_by,
@@ -1068,66 +1078,68 @@ function exportUserData(req, res, next) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="user-${req.params.id}-export.json"`);
 
-    res.write('{');
-    writeJsonValue(res, 'exported_at', nowIso(), '');
-    writeJsonValue(res, 'exported_by', req.user.id);
-    writeJsonValue(res, 'export_as_of', asOf);
-    writeJsonValue(res, 'export_limit', limit);
-    writeJsonValue(res, 'cursor', { ...cursor, as_of: asOf });
-    writeJsonValue(res, 'user', sanitizeUser(user));
+    db.transaction(() => {
+      res.write('{');
+      writeJsonValue(res, 'exported_at', nowIso(), '');
+      writeJsonValue(res, 'exported_by', req.user.id);
+      writeJsonValue(res, 'export_as_of', asOf);
+      writeJsonValue(res, 'export_limit', limit);
+      writeJsonValue(res, 'cursor', { ...cursor, as_of: asOf });
+      writeJsonValue(res, 'user', sanitizeUser(user));
 
-    const accountsPage = streamJsonArray(
-      res,
-      'accounts',
-      db.prepare('SELECT * FROM accounts WHERE user_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
-      [req.params.id, asOf],
-      limit,
-      cursor.accounts
-    );
-    const transactionsPage = streamJsonArray(
-      res,
-      'transactions',
-      db.prepare(`
-        SELECT t.*, c.name AS category_name, a.name AS account_name
-        FROM transactions t
-        LEFT JOIN categories c ON c.id = t.category_id
-        LEFT JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
-        WHERE t.user_id = ? AND t.created_at <= ?
-        ORDER BY t.date DESC, t.created_at DESC, t.id DESC
-        LIMIT ? OFFSET ?
-      `),
-      [req.params.id, asOf],
-      limit,
-      cursor.transactions
-    );
-    const budgetsPage = streamJsonArray(
-      res,
-      'budgets',
-      db.prepare('SELECT * FROM budgets WHERE user_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
-      [req.params.id, asOf],
-      limit,
-      cursor.budgets
-    );
-    const auditLogsPage = streamJsonArray(
-      res,
-      'audit_logs',
-      db.prepare('SELECT * FROM audit_logs WHERE (user_id = ? OR entity_id = ?) AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
-      [req.params.id, req.params.id, asOf],
-      limit,
-      cursor.audit_logs
-    );
+      const accountsPage = streamJsonArray(
+        res,
+        'accounts',
+        db.prepare('SELECT * FROM accounts WHERE user_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
+        [req.params.id, asOf],
+        limit,
+        cursor.accounts
+      );
+      const transactionsPage = streamJsonArray(
+        res,
+        'transactions',
+        db.prepare(`
+          SELECT t.*, c.name AS category_name, a.name AS account_name
+          FROM transactions t
+          LEFT JOIN categories c ON c.id = t.category_id
+          LEFT JOIN accounts a ON a.id = t.account_id AND a.user_id = t.user_id
+          WHERE t.user_id = ? AND t.created_at <= ?
+          ORDER BY t.date DESC, t.created_at DESC, t.id DESC
+          LIMIT ? OFFSET ?
+        `),
+        [req.params.id, asOf],
+        limit,
+        cursor.transactions
+      );
+      const budgetsPage = streamJsonArray(
+        res,
+        'budgets',
+        db.prepare('SELECT * FROM budgets WHERE user_id = ? AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
+        [req.params.id, asOf],
+        limit,
+        cursor.budgets
+      );
+      const auditLogsPage = streamJsonArray(
+        res,
+        'audit_logs',
+        db.prepare('SELECT * FROM audit_logs WHERE (user_id = ? OR entity_id = ?) AND created_at <= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
+        [req.params.id, req.params.id, asOf],
+        limit,
+        cursor.audit_logs
+      );
 
-    const nextOffsets = {
-      accounts: cursor.accounts + accountsPage.count,
-      transactions: cursor.transactions + transactionsPage.count,
-      budgets: cursor.budgets + budgetsPage.count,
-      audit_logs: cursor.audit_logs + auditLogsPage.count,
-      as_of: asOf,
-    };
-    const nextCursor = accountsPage.hasMore || transactionsPage.hasMore || budgetsPage.hasMore || auditLogsPage.hasMore
-      ? encodeExportCursor(nextOffsets)
-      : null;
-    writeJsonValue(res, 'next_cursor', nextCursor);
+      const nextOffsets = {
+        accounts: cursor.accounts + accountsPage.count,
+        transactions: cursor.transactions + transactionsPage.count,
+        budgets: cursor.budgets + budgetsPage.count,
+        audit_logs: cursor.audit_logs + auditLogsPage.count,
+        as_of: asOf,
+      };
+      const nextCursor = accountsPage.hasMore || transactionsPage.hasMore || budgetsPage.hasMore || auditLogsPage.hasMore
+        ? encodeExportCursor(nextOffsets)
+        : null;
+      writeJsonValue(res, 'next_cursor', nextCursor);
+    })();
     res.end('}');
     return undefined;
   } catch (error) {
@@ -1553,6 +1565,8 @@ function bulkUpdateUsers(req, res, next) {
     }
     const placeholders = ids.map(() => '?').join(', ');
     const users = db.prepare(`SELECT * FROM users WHERE id IN (${placeholders})`).all(...ids);
+    const foundIds = new Set(users.map((user) => user.id));
+    const missingIds = ids.filter((id) => !foundIds.has(id));
     const now = nowIso();
     db.transaction(() => {
       if (action === 'activate' || action === 'deactivate') {
@@ -1565,7 +1579,7 @@ function bulkUpdateUsers(req, res, next) {
       }
       audit(req, 'ADMIN_BULK_USER_OPERATION', 'user', null, users.map(sanitizeUser), { action, reason, count: users.length });
     })();
-    return res.json({ success: true, action, affected: users.length });
+    return res.status(missingIds.length > 0 ? 207 : 200).json({ success: true, action, affected: users.length, missing: missingIds });
   } catch (error) {
     return next(error);
   }
@@ -1662,12 +1676,20 @@ function vacuumDatabase(req, res, next) {
   }
 }
 
-function downloadDatabaseBackup(req, res, next) {
+async function downloadDatabaseBackup(req, res, next) {
   try {
     audit(req, 'ADMIN_DOWNLOADED_DATABASE_BACKUP', 'database', 'main', null, { db_size_mb: getDbSizeMb() });
+    const tmpPath = path.join(os.tmpdir(), `backup-${Date.now()}.db`);
+    await db.backup(tmpPath);
     res.setHeader('Content-Type', 'application/gzip');
     res.setHeader('Content-Disposition', `attachment; filename="financeapp-${Date.now()}.sqlite.gz"`);
-    return fs.createReadStream(dbPath).pipe(zlib.createGzip()).pipe(res);
+    const stream = fs.createReadStream(tmpPath);
+    stream.on('end', () => fs.unlink(tmpPath, () => {}));
+    stream.on('error', (err) => {
+      logger.error('Backup stream error', { error: err.message });
+      fs.unlink(tmpPath, () => {});
+    });
+    return stream.pipe(zlib.createGzip()).pipe(res);
   } catch (error) {
     return next(error);
   }
@@ -1769,11 +1791,13 @@ function createAnnouncement(req, res, next) {
       updated_at: null,
       created_by: req.user.id,
     };
-    db.prepare(`
-      INSERT INTO announcements (id, title, body, is_active, starts_at, ends_at, created_at, updated_at, created_by)
-      VALUES (@id, @title, @body, @is_active, @starts_at, @ends_at, @created_at, @updated_at, @created_by)
-    `).run(row);
-    audit(req, 'ADMIN_CREATED_ANNOUNCEMENT', 'announcement', row.id, null, row);
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO announcements (id, title, body, is_active, starts_at, ends_at, created_at, updated_at, created_by)
+        VALUES (@id, @title, @body, @is_active, @starts_at, @ends_at, @created_at, @updated_at, @created_by)
+      `).run(row);
+      audit(req, 'ADMIN_CREATED_ANNOUNCEMENT', 'announcement', row.id, null, row);
+    })();
     const users = db.prepare('SELECT id FROM users WHERE is_active = 1').all();
     users.forEach((user) => {
       void sendPushNotification(user.id, row.title, row.body, { type: 'admin_announcement', announcementId: row.id })
@@ -1829,7 +1853,19 @@ function listApiTokens(req, res, next) {
     const { page, limit, offset } = pagination(req);
     const total = db.prepare('SELECT COUNT(*) AS count FROM admin_api_tokens').get().count;
     const rows = db.prepare('SELECT id, name, scopes, is_active, last_used_at, created_at, revoked_at, created_by FROM admin_api_tokens ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    return res.json({ data: serializeMoney(rows.map((row) => ({ ...row, scopes: JSON.parse(row.scopes || '[]') }))), pagination: paginationMeta(page, limit, total) });
+    return res.json({
+      data: serializeMoney(rows.map((row) => {
+        let scopes = [];
+        try {
+          scopes = JSON.parse(row.scopes || '[]');
+          if (!Array.isArray(scopes)) scopes = [];
+        } catch {
+          scopes = [];
+        }
+        return { ...row, scopes };
+      })),
+      pagination: paginationMeta(page, limit, total),
+    });
   } catch (error) {
     return next(error);
   }
@@ -1859,11 +1895,13 @@ function createApiToken(req, res, next) {
       created_at: nowIso(),
       created_by: req.user.id,
     };
-    db.prepare(`
-      INSERT INTO admin_api_tokens (id, name, token_hash, scopes, is_active, created_at, created_by)
-      VALUES (@id, @name, @token_hash, @scopes, @is_active, @created_at, @created_by)
-    `).run(row);
-    audit(req, 'ADMIN_CREATED_API_TOKEN', 'api_token', row.id, null, { name: row.name, scopes: JSON.parse(row.scopes) });
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO admin_api_tokens (id, name, token_hash, scopes, is_active, created_at, created_by)
+        VALUES (@id, @name, @token_hash, @scopes, @is_active, @created_at, @created_by)
+      `).run(row);
+      audit(req, 'ADMIN_CREATED_API_TOKEN', 'api_token', row.id, null, { name: row.name, scopes: JSON.parse(row.scopes) });
+    })();
     return res.status(201).json({ id: row.id, name: row.name, scopes: JSON.parse(row.scopes), token: rawToken });
   } catch (error) {
     return next(error);
@@ -1878,8 +1916,10 @@ function revokeApiToken(req, res, next) {
   try {
     const token = db.prepare('SELECT * FROM admin_api_tokens WHERE id = ?').get(req.params.id);
     if (!token) return res.status(404).json({ error: 'API token not found' });
-    db.prepare('UPDATE admin_api_tokens SET is_active = 0, revoked_at = ? WHERE id = ?').run(nowIso(), req.params.id);
-    audit(req, 'ADMIN_REVOKED_API_TOKEN', 'api_token', req.params.id, { name: token.name }, { revoked: true });
+    db.transaction(() => {
+      db.prepare('UPDATE admin_api_tokens SET is_active = 0, revoked_at = ? WHERE id = ?').run(nowIso(), req.params.id);
+      audit(req, 'ADMIN_REVOKED_API_TOKEN', 'api_token', req.params.id, { name: token.name }, { revoked: true });
+    })();
     return res.json({ success: true });
   } catch (error) {
     return next(error);
@@ -1914,11 +1954,13 @@ function createWebhook(req, res, next) {
       updated_at: null,
       created_by: req.user.id,
     };
-    db.prepare(`
-      INSERT INTO webhooks (id, name, url, event, is_active, secret, created_at, updated_at, created_by)
-      VALUES (@id, @name, @url, @event, @is_active, @secret, @created_at, @updated_at, @created_by)
-    `).run(row);
-    audit(req, 'ADMIN_CREATED_WEBHOOK', 'webhook', row.id, null, { ...row, secret: '[redacted]' });
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO webhooks (id, name, url, event, is_active, secret, created_at, updated_at, created_by)
+        VALUES (@id, @name, @url, @event, @is_active, @secret, @created_at, @updated_at, @created_by)
+      `).run(row);
+      audit(req, 'ADMIN_CREATED_WEBHOOK', 'webhook', row.id, null, { ...row, secret: '[redacted]' });
+    })();
     return res.status(201).json(serializeMoney({ ...row, secret: '[configured]' }));
   } catch (error) {
     return next(error);
@@ -1945,9 +1987,12 @@ function updateWebhook(req, res, next) {
     }
     updates.updated_at = nowIso();
     const setSql = Object.keys(updates).map((field) => `${field} = @${field}`).join(', ');
-    db.prepare(`UPDATE webhooks SET ${setSql} WHERE id = @id`).run({ ...updates, id: req.params.id });
-    const row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
-    audit(req, 'ADMIN_UPDATED_WEBHOOK', 'webhook', req.params.id, { ...old, secret: '[redacted]' }, { ...row, secret: '[redacted]' });
+    let row;
+    db.transaction(() => {
+      db.prepare(`UPDATE webhooks SET ${setSql} WHERE id = @id`).run({ ...updates, id: req.params.id });
+      row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+      audit(req, 'ADMIN_UPDATED_WEBHOOK', 'webhook', req.params.id, { ...old, secret: '[redacted]' }, { ...row, secret: '[redacted]' });
+    })();
     return res.json(serializeMoney({ ...row, secret: row.secret ? '[configured]' : null }));
   } catch (error) {
     return next(error);
