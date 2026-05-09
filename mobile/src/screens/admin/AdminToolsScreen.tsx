@@ -35,7 +35,7 @@ type Announcement = { id: string; title: string; body: string; is_active: number
 type ApiToken = { id: string; name: string; scopes: string[]; is_active: number | boolean; created_at: string; revoked_at?: string | null };
 type Webhook = { id: string; name: string; url: string; event: string; is_active: number | boolean; delivery_count?: number; created_at: string };
 type SecurityBlock = { ip: string; blocked_until?: string; expires_at?: string; reason?: string };
-type ResultState = { title: string; body: string } | null;
+type ResultState = { title: string; summary?: string; body: string } | null;
 
 function errorMessage(error: unknown, fallback: string) {
   const response = (error as { response?: { data?: { error?: string; errors?: Array<{ message?: string }> } }; message?: string }).response;
@@ -206,14 +206,14 @@ export default function AdminToolsScreen() {
         webhook_timeout_ms: Number(settings.webhook_timeout_ms || 5000),
       };
       const response = await api.put<ConfigResponse>('/api/admin/system-config', payload);
-      setResult({ title: 'Saved System Config', body: formatJson(response.data.writable_settings) });
+      setResult({ title: 'Saved System Config', summary: 'System settings were saved. The JSON below shows the stored values returned by the server.', body: formatJson(response.data.writable_settings) });
     });
   }
 
   async function runIntegrityCheck() {
     await runAction('Integrity Check', async () => {
       const response = await api.post('/api/admin/database/integrity-check');
-      setResult({ title: 'Integrity Check Result', body: formatJson(response.data) });
+      setResult({ title: 'Integrity Check Result', summary: 'The database integrity check finished. Review the JSON rows below if any result is not ok.', body: formatJson(response.data) });
     }, { refresh: false });
   }
 
@@ -226,7 +226,7 @@ export default function AdminToolsScreen() {
         onPress: () => {
           void runAction('Vacuum DB', async () => {
             const response = await api.post('/api/admin/database/vacuum');
-            setResult({ title: 'Vacuum Result', body: formatJson(response.data) });
+            setResult({ title: 'Vacuum Result', summary: 'SQLite VACUUM finished and the action was recorded in the audit log.', body: formatJson(response.data) });
           });
         },
       },
@@ -239,7 +239,7 @@ export default function AdminToolsScreen() {
       const filename = `${type}-report-${new Date().toISOString().slice(0, 10)}.csv`;
       const uri = await writeTextFile(filename, String(response.data || ''), 'text/csv');
       if (uri) await shareFile(uri, 'text/csv');
-      setResult({ title: 'CSV Export Ready', body: filename });
+      setResult({ title: 'CSV Export Ready', summary: `The ${type} report export is ready.`, body: filename });
     }, { refresh: false });
   }
 
@@ -249,7 +249,7 @@ export default function AdminToolsScreen() {
       if (Platform.OS === 'web') {
         const response = await api.get<ArrayBuffer>('/api/admin/database/backup', { responseType: 'arraybuffer' });
         downloadWebBlob(response.data, filename, 'application/gzip');
-        setResult({ title: 'Database Backup Ready', body: filename });
+        setResult({ title: 'Database Backup Ready', summary: 'A compressed database backup was prepared for download.', body: filename });
         return;
       }
 
@@ -260,7 +260,7 @@ export default function AdminToolsScreen() {
         idempotent: true,
       });
       await shareFile(downloaded.uri, 'application/gzip');
-      setResult({ title: 'Database Backup Ready', body: filename });
+      setResult({ title: 'Database Backup Ready', summary: 'A compressed database backup was prepared for sharing.', body: filename });
     }, { refresh: false });
   }
 
@@ -276,7 +276,7 @@ export default function AdminToolsScreen() {
         onPress: () => {
           void runAction('Purge Old Audits', async () => {
             const response = await api.post('/api/admin/audit-retention/purge', { before: beforeDate.toISOString() });
-            setResult({ title: 'Audit Purge Result', body: formatJson(response.data) });
+            setResult({ title: 'Audit Purge Result', summary: `Audit logs older than ${beforeDate.toLocaleDateString()} were purged. The JSON below shows the server result.`, body: formatJson(response.data) });
           });
         },
       },
@@ -292,7 +292,7 @@ export default function AdminToolsScreen() {
       const response = await api.post('/api/admin/announcements', { title: announcementTitle.trim(), body: announcementBody.trim(), is_active: true });
       setAnnouncementTitle('');
       setAnnouncementBody('');
-      setResult({ title: 'Announcement Created', body: formatJson(response.data) });
+      setResult({ title: 'Announcement Created', summary: 'The announcement was created and active users can now receive it.', body: formatJson(response.data) });
     });
   }
 
@@ -325,7 +325,7 @@ export default function AdminToolsScreen() {
     await runAction('API token created', async () => {
       const response = await api.post<{ id: string; name: string; scopes: string[]; token: string }>('/api/admin/api-tokens', { name: tokenName.trim(), scopes: ['read:users'] });
       setTokenName('');
-      setResult({ title: 'Copy API Token Now', body: response.data.token });
+      setResult({ title: 'Copy API Token Now', summary: 'This token is shown only once. Store it before closing this panel.', body: response.data.token });
     });
   }
 
@@ -348,7 +348,7 @@ export default function AdminToolsScreen() {
       });
       setWebhookName('');
       setWebhookUrl('');
-      setResult({ title: 'Webhook Created', body: formatJson(response.data) });
+      setResult({ title: 'Webhook Created', summary: 'The webhook was saved. Delivery attempts will appear in the deliveries view.', body: formatJson(response.data) });
     });
   }
 
@@ -361,7 +361,7 @@ export default function AdminToolsScreen() {
   async function viewWebhookDeliveries(item: Webhook) {
     await runAction('Webhook deliveries loaded', async () => {
       const response = await api.get(`/api/admin/webhooks/${item.id}/deliveries`);
-      setResult({ title: `${item.name} Deliveries`, body: formatJson(response.data) });
+      setResult({ title: `${item.name} Deliveries`, summary: 'Recent webhook delivery attempts are shown below with their response details.', body: formatJson(response.data) });
     }, { refresh: false });
   }
 
@@ -373,7 +373,7 @@ export default function AdminToolsScreen() {
     await runAction('IP blocked', async () => {
       const response = await api.post('/api/admin/security-blocks', { ip: ipAddress.trim(), duration_minutes: 30 });
       setIpAddress('');
-      setResult({ title: 'Security Block Created', body: formatJson(response.data) });
+      setResult({ title: 'Security Block Created', summary: `${ipAddress.trim()} was blocked for 30 minutes and the action was audited.`, body: formatJson(response.data) });
     });
   }
 
@@ -438,6 +438,7 @@ export default function AdminToolsScreen() {
             <Text style={styles.title}>{result.title}</Text>
             <Pressable onPress={() => setResult(null)}><Feather name="x" size={22} color={theme.colors.text.primary} /></Pressable>
           </View>
+          {result.summary ? <Text style={styles.subtle}>{result.summary}</Text> : null}
           <Text selectable style={styles.code}>{result.body}</Text>
         </View>
       ) : null}

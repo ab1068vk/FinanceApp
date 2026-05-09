@@ -9,6 +9,7 @@ import { AdminStackParamList } from '../../navigation';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { AuditLog, fetchAuditLogs, fetchMoreAuditLogs } from '../../store/slices/adminSlice';
 import { useTheme } from '../../theme';
+import { auditActionLabel, auditEnglishDetails, auditEnglishSummary, formatAuditJson } from '../../utils/auditLogs';
 
 type Props = StackScreenProps<AdminStackParamList, 'AuditLogs'>;
 
@@ -23,8 +24,22 @@ const actionOptions = [
   'ADMIN_UPDATED_USER_STATUS',
   'ADMIN_UPDATED_USER_ROLE',
   'ADMIN_RESET_USER_PASSWORD',
-  'ADMIN_DELETED_USER_PERMANENTLY',
+  'ADMIN_HARD_DELETED_USER',
   'ADMIN_VIEWED_USER_DATA',
+  'ADMIN_SOFT_DELETED_TRANSACTION',
+  'ADMIN_UPDATED_USER_ACCOUNT_STATUS',
+  'ADMIN_DELETED_USER_ACCOUNT',
+  'ADMIN_REVOKED_USER_SESSIONS',
+  'ADMIN_UPDATED_SYSTEM_CONFIG',
+  'ADMIN_CREATED_ANNOUNCEMENT',
+  'ADMIN_UPDATED_ANNOUNCEMENT',
+  'ADMIN_DELETED_ANNOUNCEMENT',
+  'ADMIN_CREATED_API_TOKEN',
+  'ADMIN_REVOKED_API_TOKEN',
+  'ADMIN_CREATED_WEBHOOK',
+  'ADMIN_UPDATED_WEBHOOK',
+  'ADMIN_BLOCKED_SECURITY_IP',
+  'ADMIN_STARTED_IMPERSONATION',
 ];
 
 function badgeColor(action: string, colors: ReturnType<typeof useTheme>['colors']) {
@@ -46,27 +61,6 @@ function prettyDate(value?: string | null) {
 function truncate(value?: string | null) {
   if (!value) return 'None';
   return value.length > 18 ? `${value.slice(0, 18)}...` : value;
-}
-
-function formatJson(value?: string | null) {
-  if (!value) return 'None';
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-}
-
-function attackSummary(log: AuditLog) {
-  if (!log.action.startsWith('SECURITY_')) return null;
-  try {
-    const payload = JSON.parse(log.new_value || '{}');
-    const first = Array.isArray(payload.findings) ? payload.findings[0] : null;
-    if (!first) return null;
-    return `${first.attack_type || 'security'} in ${first.input_path || 'input'}: ${first.input_preview || ''}`;
-  } catch {
-    return null;
-  }
 }
 
 export default function AuditLogsScreen({ route }: Props) {
@@ -94,6 +88,7 @@ export default function AuditLogsScreen({ route }: Props) {
     topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.sm },
     badge: { borderRadius: theme.borderRadius.full, paddingHorizontal: theme.spacing.sm, paddingVertical: 4, maxWidth: '72%' },
     badgeText: { color: theme.colors.text.inverse, fontSize: theme.typography.xs, fontWeight: '800' },
+    actionCode: { color: theme.colors.text.light, fontSize: theme.typography.xs, fontWeight: '700', marginBottom: theme.spacing.xs },
     userText: { color: theme.colors.text.primary, fontSize: theme.typography.md, fontWeight: '800' },
     muted: { color: theme.colors.text.secondary, fontSize: theme.typography.sm },
     metaRow: { flexDirection: 'row', justifyContent: 'space-between', gap: theme.spacing.sm, marginTop: theme.spacing.xs },
@@ -102,6 +97,8 @@ export default function AuditLogsScreen({ route }: Props) {
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: theme.spacing.md },
     modalTitle: { color: theme.colors.text.primary, fontSize: theme.typography.xl, fontWeight: '800' },
     detailLabel: { color: theme.colors.text.secondary, fontSize: theme.typography.xs, fontWeight: '800', textTransform: 'uppercase', marginTop: theme.spacing.md, marginBottom: theme.spacing.xs },
+    detailBox: { backgroundColor: theme.colors.background, borderRadius: theme.borderRadius.sm, padding: theme.spacing.sm, gap: 6 },
+    detailText: { color: theme.colors.text.primary, fontSize: theme.typography.sm, lineHeight: 20 },
     codeBlock: { backgroundColor: theme.colors.background, borderRadius: theme.borderRadius.sm, padding: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.border },
     codeText: { color: theme.colors.text.primary, fontSize: theme.typography.xs, lineHeight: 18 },
     empty: { alignItems: 'center', padding: theme.spacing.xl, gap: theme.spacing.sm },
@@ -134,14 +131,17 @@ export default function AuditLogsScreen({ route }: Props) {
 
   function renderLog({ item }: { item: AuditLog }) {
     const color = badgeColor(item.action, theme.colors);
+    const label = item.action_label || auditActionLabel(item.action);
+    const summary = auditEnglishSummary(item);
     return (
       <Pressable style={styles.card} onPress={() => setSelectedLog(item)}>
         <View style={styles.topRow}>
-          <View style={[styles.badge, { backgroundColor: color }]}><Text style={styles.badgeText} numberOfLines={1}>{item.action}</Text></View>
+          <View style={[styles.badge, { backgroundColor: color }]}><Text style={styles.badgeText} numberOfLines={1}>{label}</Text></View>
           <Feather name="chevron-right" size={18} color={theme.colors.text.light} />
         </View>
+        <Text style={styles.actionCode}>{item.action}</Text>
         <Text style={styles.userText} numberOfLines={1}>{item.user_email || 'System / deleted user'}</Text>
-        <Text style={styles.muted} numberOfLines={2}>{item.summary || attackSummary(item) || item.action_label || item.action.replace(/_/g, ' ')}</Text>
+        <Text style={styles.muted} numberOfLines={3}>{summary}</Text>
         <Text style={styles.muted}>{item.entity_type || 'System'} - {truncate(item.entity_id)}</Text>
         <View style={styles.metaRow}>
           <Text style={styles.muted}>{prettyDate(item.created_at)}</Text>
@@ -163,7 +163,7 @@ export default function AuditLogsScreen({ route }: Props) {
             const active = selectedAction === action;
             return (
               <Pressable key={action} style={[styles.chip, active && styles.chipActive]} onPress={() => setSelectedAction(action)}>
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{action.replace(/_/g, ' ')}</Text>
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{action === 'All' ? 'All' : auditActionLabel(action)}</Text>
               </Pressable>
             );
           })}
@@ -209,9 +209,16 @@ export default function AuditLogsScreen({ route }: Props) {
               </View>
               <ScrollView showsVerticalScrollIndicator={false}>
                 <Text style={styles.detailLabel}>Action</Text>
-                <View style={[styles.badge, { backgroundColor: badgeColor(selectedLog.action, theme.colors), alignSelf: 'flex-start' }]}><Text style={styles.badgeText}>{selectedLog.action_label || selectedLog.action}</Text></View>
+                <View style={[styles.badge, { backgroundColor: badgeColor(selectedLog.action, theme.colors), alignSelf: 'flex-start' }]}><Text style={styles.badgeText}>{selectedLog.action_label || auditActionLabel(selectedLog.action)}</Text></View>
+                <Text style={[styles.actionCode, { marginTop: theme.spacing.xs }]}>{selectedLog.action}</Text>
                 <Text style={styles.detailLabel}>Summary</Text>
-                <Text style={styles.userText}>{selectedLog.summary || attackSummary(selectedLog) || selectedLog.action.replace(/_/g, ' ')}</Text>
+                <Text style={styles.userText}>{auditEnglishSummary(selectedLog)}</Text>
+                <Text style={styles.detailLabel}>What Changed</Text>
+                <View style={styles.detailBox}>
+                  {auditEnglishDetails(selectedLog).length ? auditEnglishDetails(selectedLog).map((detail) => (
+                    <Text key={detail} style={styles.detailText}>- {detail}</Text>
+                  )) : <Text style={styles.detailText}>No readable change details were recorded for this event.</Text>}
+                </View>
                 <Text style={styles.detailLabel}>User</Text>
                 <Text style={styles.userText}>{selectedLog.user_email || 'System / deleted user'}</Text>
                 <Text style={styles.muted}>{selectedLog.user_full_name || selectedLog.user_id || 'No user attached'}</Text>
@@ -220,16 +227,10 @@ export default function AuditLogsScreen({ route }: Props) {
                 <Text style={styles.detailLabel}>Request</Text>
                 <Text style={styles.muted}>{prettyDate(selectedLog.created_at)} - {selectedLog.ip_address || 'No IP'}</Text>
                 <Text style={styles.muted}>{selectedLog.user_agent || 'No user agent'}</Text>
-                {attackSummary(selectedLog) ? (
-                  <>
-                    <Text style={styles.detailLabel}>Security Finding</Text>
-                    <View style={styles.codeBlock}><Text style={styles.codeText}>{attackSummary(selectedLog)}</Text></View>
-                  </>
-                ) : null}
                 <Text style={styles.detailLabel}>Old Value</Text>
-                <View style={styles.codeBlock}><Text style={styles.codeText}>{formatJson(selectedLog.old_value)}</Text></View>
+                <View style={styles.codeBlock}><Text style={styles.codeText}>{formatAuditJson(selectedLog.old_value)}</Text></View>
                 <Text style={styles.detailLabel}>New Value</Text>
-                <View style={styles.codeBlock}><Text style={styles.codeText}>{formatJson(selectedLog.new_value)}</Text></View>
+                <View style={styles.codeBlock}><Text style={styles.codeText}>{formatAuditJson(selectedLog.new_value)}</Text></View>
               </ScrollView>
             </>
           ) : null}

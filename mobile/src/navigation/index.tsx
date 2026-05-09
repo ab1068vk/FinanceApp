@@ -339,7 +339,7 @@ function AppStack() {
   );
 }
 
-function AppMenu({ visible, activeRouteName, onClose, onNavigate }: {
+function AppMenu({ visible, activeRouteName, menuItems: visibleMenuItems, onClose, onNavigate }: {
   visible: boolean;
   activeRouteName?: keyof AppTabParamList;
   menuItems: MenuItem[];
@@ -368,7 +368,7 @@ function AppMenu({ visible, activeRouteName, onClose, onNavigate }: {
           </TouchableOpacity>
         </View>
         <View style={styles.menuList}>
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const active = activeRouteName === item.name;
             return (
               <TouchableOpacity key={item.name} style={[styles.menuItem, active && styles.menuItemActive]} onPress={() => onNavigate(item.name)} activeOpacity={0.78}>

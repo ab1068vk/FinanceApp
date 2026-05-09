@@ -24,6 +24,7 @@ import {
   updateUserStatus,
 } from '../../store/slices/adminSlice';
 import { useTheme } from '../../theme';
+import { auditActionLabel, auditEnglishSummary } from '../../utils/auditLogs';
 
 type Props = StackScreenProps<AdminStackParamList, 'UserDetail'>;
 type ActionType = 'status' | 'role' | 'password' | 'transactions' | 'accounts' | 'deleteAccount' | 'delete' | null;
@@ -521,9 +522,10 @@ export default function UserDetailScreen({ route, navigation }: Props) {
           {selectedUserLoginHistory.length === 0 ? <Text style={styles.subtle}>No login history found.</Text> : selectedUserLoginHistory.map((log) => (
             <View key={log.id} style={styles.auditItem}>
               <View style={styles.auditTop}>
-                <Text style={styles.metricName}>{log.action}</Text>
+                <Text style={styles.metricName}>{log.action_label || auditActionLabel(log.action)}</Text>
                 <Text style={styles.subtle}>{formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}</Text>
               </View>
+              <Text style={styles.subtle}>{auditEnglishSummary(log)}</Text>
               <Text style={styles.subtle}>{log.ip_address || 'No IP'} - {log.user_agent || 'No user agent'}</Text>
             </View>
           ))}
@@ -536,10 +538,11 @@ export default function UserDetailScreen({ route, navigation }: Props) {
             return (
               <View key={log.id} style={styles.auditItem}>
                 <View style={styles.auditTop}>
-                  <View style={[styles.auditBadge, { backgroundColor: badgeColor }]}><Text style={styles.auditBadgeText}>{log.action}</Text></View>
+                  <View style={[styles.auditBadge, { backgroundColor: badgeColor }]}><Text style={styles.auditBadgeText}>{log.action_label || auditActionLabel(log.action)}</Text></View>
                   <Text style={styles.subtle}>{formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}</Text>
                 </View>
-                <Text style={styles.metricName}>{log.summary || log.action_label || log.action.replace(/_/g, ' ')}</Text>
+                <Text style={styles.metricName}>{auditEnglishSummary(log)}</Text>
+                <Text style={styles.subtle}>{log.action}</Text>
                 <Text style={styles.subtle}>{log.entity_type || 'System'} {log.entity_id ? `- ${log.entity_id.slice(0, 8)}` : ''}</Text>
               </View>
             );
