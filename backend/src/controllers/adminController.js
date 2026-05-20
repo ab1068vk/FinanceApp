@@ -31,6 +31,8 @@ const AVAILABLE_TOKEN_SCOPES = [
   'db:maintenance',
 ];
 const AVAILABLE_TOKEN_SCOPE_SET = new Set(AVAILABLE_TOKEN_SCOPES);
+const TX_NOT_DELETED = 'admin_deleted_at IS NULL';
+const TX_NOT_DELETED_T = 't.admin_deleted_at IS NULL';
 
 function nowIso() {
   return new Date().toISOString();
@@ -353,7 +355,7 @@ function updateStoredBalance(accountId, userId, delta) {
 }
 
 function transactionsForAccountDelete(accountId, userId) {
-  const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
+  const direct = db.prepare(`SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`).all(accountId, userId);
   const transferGroupIds = Array.from(new Set(direct.map((tx) => tx.transfer_group_id).filter(Boolean)));
   if (!transferGroupIds.length) return direct;
 
@@ -361,7 +363,7 @@ function transactionsForAccountDelete(accountId, userId) {
   const transferRows = db.prepare(`
     SELECT * FROM transactions
     WHERE user_id = ? AND transfer_group_id IN (${placeholders})
-      AND admin_deleted_at IS NULL
+      AND ${TX_NOT_DELETED}
   `).all(userId, ...transferGroupIds);
 
   const byId = new Map();
@@ -386,16 +388,16 @@ function moveAccountTransactionsToCash(accountId, userId) {
     if (!cashAccount) throw Object.assign(new Error('Default cash account is unavailable'), { statusCode: 500 });
     if (cashAccount.id === accountId) throw Object.assign(new Error('The default cash account cannot be attached to itself'), { statusCode: 400 });
 
-    const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
+    const direct = db.prepare(`SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`).all(accountId, userId);
     const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
     // FIX: 5
-    db.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
+    db.prepare(`UPDATE transactions SET account_id = ?, updated_at = ? WHERE account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`)
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
+    db.prepare(`UPDATE transactions SET from_account_id = ?, updated_at = ? WHERE from_account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`)
       .run(cashAccount.id, updatedAt, accountId, userId);
-    db.prepare('UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ? AND admin_deleted_at IS NULL')
+    db.prepare(`UPDATE transactions SET to_account_id = ?, updated_at = ? WHERE to_account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`)
       .run(cashAccount.id, updatedAt, accountId, userId);
 
     updateStoredBalance(accountId, userId, -movedDelta);
@@ -460,17 +462,17 @@ function getDashboardStats(req, res, next) {
         COUNT(*) AS total
       FROM users
     `).get();
-    const transactionTotals = db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum FROM transactions WHERE admin_deleted_at IS NULL').get();
+    const transactionTotals = db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum FROM transactions WHERE ${TX_NOT_DELETED}`).get();
     const totalAccounts = db.prepare('SELECT COUNT(*) AS count FROM accounts').get().count;
     const deletedUsersCount = db.prepare('SELECT COUNT(*) AS count FROM deleted_users').get().count;
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
     const newUsersThisMonth = db.prepare('SELECT COUNT(*) AS count FROM users WHERE created_at >= ?').get(monthStart).count;
-    const newTransactionsThisMonth = db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE created_at >= ?').get(monthStart).count;
+    const newTransactionsThisMonth = db.prepare(`SELECT COUNT(*) AS count FROM transactions WHERE created_at >= ? AND ${TX_NOT_DELETED}`).get(monthStart).count;
     const topCategories = db.prepare(`
       SELECT c.id AS category_id, COALESCE(c.name, 'Uncategorized') AS category_name, COALESCE(SUM(t.amount), 0) AS total
       FROM transactions t
       LEFT JOIN categories c ON c.id = t.category_id
-      WHERE t.type = 'expense'
+      WHERE t.type = 'expense' AND ${TX_NOT_DELETED_T}
       GROUP BY c.id, c.name
       ORDER BY total DESC
       LIMIT 5
@@ -499,7 +501,7 @@ function getDashboardStats(req, res, next) {
     const rows = db.prepare(`
       SELECT substr(date, 1, 10) AS date, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total
       FROM transactions
-      WHERE date >= ?
+      WHERE date >= ? AND ${TX_NOT_DELETED}
       GROUP BY substr(date, 1, 10)
     `).all(start.toISOString());
     const rowMap = new Map(rows.map((row) => [row.date, row]));
@@ -571,7 +573,7 @@ function getUsers(req, res, next) {
     const users = db.prepare(`
       SELECT u.*, 
         (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) AS account_count,
-        (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id) AS transaction_count
+        (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id AND ${TX_NOT_DELETED_T}) AS transaction_count
       FROM users u
       ${whereSql}
       ORDER BY u.created_at DESC
@@ -596,8 +598,8 @@ function getUser(req, res, next) {
       account_count: db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE user_id = ?').get(req.params.id).count,
       active_account_count: db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE user_id = ? AND is_active = 1').get(req.params.id).count,
       total_account_balance: db.prepare('SELECT COALESCE(SUM(balance), 0) AS total FROM accounts WHERE user_id = ? AND is_active = 1').get(req.params.id).total,
-      transaction_count: db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE user_id = ?').get(req.params.id).count,
-      transaction_total: db.prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE user_id = ?').get(req.params.id).total,
+      transaction_count: db.prepare(`SELECT COUNT(*) AS count FROM transactions WHERE user_id = ? AND ${TX_NOT_DELETED}`).get(req.params.id).count,
+      transaction_total: db.prepare(`SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE user_id = ? AND ${TX_NOT_DELETED}`).get(req.params.id).total,
       budget_count: db.prepare('SELECT COUNT(*) AS count FROM budgets WHERE user_id = ?').get(req.params.id).count,
       refresh_token_count: db.prepare('SELECT COUNT(*) AS count FROM refresh_tokens WHERE user_id = ? AND revoked = 0 AND expires_at > ?').get(req.params.id, nowIso()).count,
     };
@@ -948,6 +950,9 @@ function getUserTransactions(req, res, next) {
       where.push('LOWER(t.description) LIKE ?');
       params.push(`%${req.query.search.toLowerCase()}%`);
     }
+    if (req.query.admin_deleted === 'true') where.push('t.admin_deleted_at IS NOT NULL');
+    else if (req.query.admin_deleted === 'false') where.push(TX_NOT_DELETED_T);
+    else if (req.query.include_deleted !== 'true') where.push(TX_NOT_DELETED_T);
 
     const whereSql = where.join(' AND ');
     const total = db.prepare(`SELECT COUNT(*) AS count FROM transactions t WHERE ${whereSql}`).get(...params).count;
@@ -979,7 +984,7 @@ function getUserSpendingByCategory(req, res, next) {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const params = [req.params.id];
-    const where = ['t.user_id = ?', "t.type = 'expense'", 't.admin_deleted_at IS NULL', ...userDateFilters(req, 't.date', params)];
+    const where = ['t.user_id = ?', "t.type = 'expense'", TX_NOT_DELETED_T, ...userDateFilters(req, 't.date', params)];
     const rows = db.prepare(`
       SELECT c.id AS category_id,
              COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -1035,7 +1040,7 @@ function getUserBudgetPerformance(req, res, next) {
     const rows = db.prepare(`
       SELECT b.*, c.name AS category_name, c.color AS category_color,
         COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = b.user_id AND t.category_id = b.category_id
-          AND t.type = 'expense' AND t.admin_deleted_at IS NULL AND datetime(t.date) >= datetime(b.start_date)
+          AND t.type = 'expense' AND ${TX_NOT_DELETED_T} AND datetime(t.date) >= datetime(b.start_date)
           AND (b.end_date IS NULL OR datetime(t.date) <= datetime(b.end_date, '+1 day', '-1 second'))), 0) AS current_spending
       FROM budgets b
       LEFT JOIN categories c ON c.id = b.category_id
@@ -1186,8 +1191,8 @@ function getAllTransactions(req, res, next) {
       }
     }
     if (req.query.admin_deleted === 'true') where.push('t.admin_deleted_at IS NOT NULL');
-    else if (req.query.admin_deleted === 'false') where.push('t.admin_deleted_at IS NULL');
-    else if (req.query.include_deleted !== 'true') where.push('t.admin_deleted_at IS NULL');
+    else if (req.query.admin_deleted === 'false') where.push(TX_NOT_DELETED_T);
+    else if (req.query.include_deleted !== 'true') where.push(TX_NOT_DELETED_T);
     const startDate = req.query.start_date || req.query.date_from;
     const endDate = req.query.end_date || req.query.date_to;
     if (startDate) { where.push('t.date >= ?'); params.push(rangeStartIso(startDate)); }
@@ -1239,13 +1244,13 @@ function getAdminTransaction(req, res, next) {
 
 function adminSoftDeleteTransaction(req, res, next) {
   try {
-    const tx = db.prepare('SELECT * FROM transactions WHERE id = ? AND admin_deleted_at IS NULL').get(req.params.id);
+    const tx = db.prepare(`SELECT * FROM transactions WHERE id = ? AND ${TX_NOT_DELETED}`).get(req.params.id);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
     const reason = String(req.body.reason || '').trim();
     if (reason.length < 5) return res.status(400).json({ error: 'A deletion reason of at least 5 characters is required' });
     let related = [tx];
     if (tx.type === 'transfer' && tx.transfer_group_id) {
-      related = db.prepare('SELECT * FROM transactions WHERE user_id = ? AND transfer_group_id = ? AND admin_deleted_at IS NULL').all(tx.user_id, tx.transfer_group_id);
+      related = db.prepare(`SELECT * FROM transactions WHERE user_id = ? AND transfer_group_id = ? AND ${TX_NOT_DELETED}`).all(tx.user_id, tx.transfer_group_id);
     }
     const deletedAt = nowIso();
     db.transaction(() => {
@@ -1271,7 +1276,7 @@ function getUserAccounts(req, res, next) {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const accounts = db.prepare(`
       SELECT a.*,
-        COALESCE((SELECT COUNT(*) FROM transactions t WHERE t.account_id = a.id AND t.admin_deleted_at IS NULL), 0) AS transaction_count
+        COALESCE((SELECT COUNT(*) FROM transactions t WHERE t.account_id = a.id AND ${TX_NOT_DELETED_T}), 0) AS transaction_count
       FROM accounts a
       WHERE a.user_id = ?
       ORDER BY a.is_active DESC, a.created_at DESC
@@ -1316,7 +1321,7 @@ function deleteUserAccount(req, res, next) {
       return res.status(400).json({ error: 'transaction_action must be cash or delete' });
     }
 
-    const transactionCount = db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').get(req.params.accountId, req.params.id).count;
+    const transactionCount = db.prepare(`SELECT COUNT(*) AS count FROM transactions WHERE account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`).get(req.params.accountId, req.params.id).count;
     let transactionResult = { action: 'none', deleted: 0, moved: 0, cash_account_id: null };
     const deletedAt = nowIso();
 
@@ -1703,7 +1708,7 @@ function getReports(req, res, next) {
         COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense,
         COUNT(*) AS count
       FROM transactions
-      WHERE admin_deleted_at IS NULL
+      WHERE ${TX_NOT_DELETED}
       GROUP BY substr(date, 1, 7)
       ORDER BY month DESC
       LIMIT 36
@@ -1721,7 +1726,7 @@ function getReports(req, res, next) {
       SELECT COALESCE(c.name, 'Uncategorized') AS category_name, t.type, COUNT(*) AS count, COALESCE(SUM(t.amount), 0) AS total
       FROM transactions t
       LEFT JOIN categories c ON c.id = t.category_id
-      WHERE t.admin_deleted_at IS NULL AND t.type != 'transfer'
+      WHERE ${TX_NOT_DELETED_T} AND t.type != 'transfer'
       GROUP BY c.name, t.type
       ORDER BY total DESC
       LIMIT 100
@@ -1741,7 +1746,7 @@ function exportReportCsv(req, res, next) {
       ? db.prepare(`
         SELECT COALESCE(c.name, 'Uncategorized') AS category_name, t.type, COUNT(*) AS count, COALESCE(SUM(t.amount), 0) AS total
         FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-        WHERE t.admin_deleted_at IS NULL AND t.type != 'transfer'
+        WHERE ${TX_NOT_DELETED_T} AND t.type != 'transfer'
         GROUP BY c.name, t.type ORDER BY total DESC
       `).all()
       : db.prepare(`
@@ -1749,7 +1754,7 @@ function exportReportCsv(req, res, next) {
           COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense,
           COUNT(*) AS count
-        FROM transactions WHERE admin_deleted_at IS NULL GROUP BY substr(date, 1, 7) ORDER BY month DESC
+        FROM transactions WHERE ${TX_NOT_DELETED} GROUP BY substr(date, 1, 7) ORDER BY month DESC
       `).all().map((row) => ({ ...row, net: Number(row.income || 0) - Number(row.expense || 0) }));
     void dataReq;
     const serializedRows = serializeMoney(rows);
