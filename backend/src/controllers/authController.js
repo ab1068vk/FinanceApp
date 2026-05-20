@@ -195,7 +195,7 @@ function cleanupFailedPasswordReset(userId) {
 }
 
 function pruneRefreshTokens() {
-  db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked = 1').run(nowIso());
+  db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ?').run(nowIso());
 }
 
 function revokeOldestActiveRefreshTokens(userId, keepCount = MAX_ACTIVE_REFRESH_TOKENS - 1) {
@@ -209,6 +209,39 @@ function revokeOldestActiveRefreshTokens(userId, keepCount = MAX_ACTIVE_REFRESH_
       LIMIT -1 OFFSET ?
     )
   `).run(userId, nowIso(), keepCount);
+}
+
+function refreshTokenFamilyId(token) {
+  return token.family_id || token.id;
+}
+
+function revokeRefreshTokenFamily(req, storedToken, reason) {
+  const familyId = refreshTokenFamilyId(storedToken);
+  const result = db.prepare(`
+    UPDATE refresh_tokens
+    SET revoked = 1
+    WHERE family_id = ? OR id = ?
+  `).run(familyId, familyId);
+
+  writeSecurityLog(req, {
+    userId: storedToken.user_id,
+    action: 'SECURITY_REFRESH_TOKEN_REUSE',
+    newValue: {
+      family_id: familyId,
+      token_id: storedToken.id,
+      reason,
+      revoked: result.changes,
+      ip_address: clientIp(req),
+    },
+  });
+
+  logger.warn('Refresh token reuse detected; revoked token family', {
+    userId: storedToken.user_id,
+    familyId,
+    tokenId: storedToken.id,
+    revoked: result.changes,
+    reason,
+  });
 }
 
 async function register(req, res, next) {
@@ -426,6 +459,7 @@ function refreshToken(req, res, next) {
     const createdAt = nowIso();
     const expiresAt = addDays(new Date(), REFRESH_TOKEN_DAYS).toISOString();
     let accessToken;
+    let refreshError = null;
 
     db.transaction(() => {
       const storedToken = db.prepare(`
@@ -433,25 +467,35 @@ function refreshToken(req, res, next) {
         FROM refresh_tokens
         JOIN users ON users.id = refresh_tokens.user_id
         WHERE refresh_tokens.token_hash = ?
-          AND refresh_tokens.revoked = 0
       `).get(tokenHash);
 
       if (!storedToken) {
-        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        refreshError = Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        return;
+      }
+
+      if (storedToken.revoked) {
+        revokeRefreshTokenFamily(req, storedToken, 'revoked_token_presented');
+        refreshError = Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        return;
       }
 
       if (!storedToken.is_active) {
-        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        refreshError = Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        return;
       }
 
       if (new Date(storedToken.expires_at).getTime() <= Date.now()) {
         db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(storedToken.id);
-        throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        refreshError = Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        return;
       }
 
       const revokeResult = db.prepare('UPDATE refresh_tokens SET revoked = 1, last_used_at = ? WHERE id = ? AND revoked = 0').run(createdAt, storedToken.id);
       if (revokeResult.changes !== 1) {
-        throw Object.assign(new Error('Refresh token was already rotated'), { statusCode: 409 });
+        revokeRefreshTokenFamily(req, storedToken, 'rotation_conflict');
+        refreshError = Object.assign(new Error('Invalid refresh token'), { statusCode: 401 });
+        return;
       }
       db.prepare(`
         INSERT INTO refresh_tokens (id, user_id, family_id, token_hash, expires_at, created_at, last_used_at, user_agent, revoked)
@@ -466,6 +510,10 @@ function refreshToken(req, res, next) {
         security_stamp: storedToken.security_stamp,
       });
     })();
+
+    if (refreshError) {
+      throw refreshError;
+    }
 
     return res.status(200).json({ accessToken, refreshToken: nextRefreshToken });
   } catch (error) {

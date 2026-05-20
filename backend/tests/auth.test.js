@@ -442,6 +442,58 @@ describe('Authentication API', () => {
     await request(app).post('/api/auth/refresh').send({ refreshToken: session.refreshToken }).expect(401);
   });
 
+  test('refresh token reuse revokes the entire token family', async () => {
+    const session = await registerAndLogin();
+    const firstRotation = await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: session.refreshToken })
+      .expect(200);
+    const family = db.prepare('SELECT family_id FROM refresh_tokens WHERE user_id = ? LIMIT 1').get(session.user.id);
+
+    await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: session.refreshToken })
+      .expect(401);
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM refresh_tokens WHERE family_id = ? AND revoked = 0').get(family.family_id).count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND user_id = ?').get('SECURITY_REFRESH_TOKEN_REUSE', session.user.id).count).toBe(1);
+    await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: firstRotation.body.refreshToken })
+      .expect(401);
+
+    const newLogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: session.credentials.email, password: session.credentials.password })
+      .expect(200);
+    await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: newLogin.body.refreshToken })
+      .expect(200);
+  });
+
+  test('refresh token race revokes attacker-issued child token after reuse is detected', async () => {
+    const session = await registerAndLogin();
+    const [left, right] = await Promise.all([
+      request(app).post('/api/auth/refresh').send({ refreshToken: session.refreshToken }),
+      request(app).post('/api/auth/refresh').send({ refreshToken: session.refreshToken }),
+    ]);
+    const responses = [left, right];
+    const successful = responses.find((response) => response.status === 200);
+    const rejected = responses.find((response) => response.status === 401);
+
+    expect(successful?.body.refreshToken).toEqual(expect.any(String));
+    expect(rejected?.body.error).toBe('Invalid refresh token');
+
+    const family = db.prepare('SELECT family_id FROM refresh_tokens WHERE user_id = ? LIMIT 1').get(session.user.id);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM refresh_tokens WHERE family_id = ? AND revoked = 0').get(family.family_id).count).toBe(0);
+
+    await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: successful.body.refreshToken })
+      .expect(401);
+  });
+
   test('logout revokes refresh token', async () => {
     const session = await registerAndLogin();
     await request(app)

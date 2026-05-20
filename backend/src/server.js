@@ -96,7 +96,7 @@ const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 function cleanupRefreshTokens() {
   const now = new Date().toISOString();
-  const refresh = db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked = 1').run(now);
+  const refresh = db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ?').run(now);
   const blocklist = db.prepare('DELETE FROM access_token_blocklist WHERE expires_at <= ?').run(now);
   logger.info('Token cleanup completed', {
     refreshTokensDeleted: refresh.changes,

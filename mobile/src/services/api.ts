@@ -40,6 +40,11 @@ const processQueue = (error: unknown, token: string | null) => {
   });
 };
 
+const clearAuthAndLogout = async () => {
+  await clearTokens();
+  store.dispatch(authActions.logout());
+};
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
@@ -138,8 +143,7 @@ api.interceptors.response.use(
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      await clearTokens();
-      store.dispatch(authActions.logout());
+      await clearAuthAndLogout();
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
