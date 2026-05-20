@@ -6,6 +6,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useFocusEffect } from '@react-navigation/native';
 import { API_BASE_URL } from '../../constants';
 import api from '../../services/api';
+import { getApiErrorMessage } from '../../services/apiErrors';
 import { getTokens } from '../../services/secureStorage';
 import { showToast } from '../../components/common/Toast';
 import { useTheme } from '../../theme';
@@ -38,8 +39,7 @@ type SecurityBlock = { ip: string; blocked_until?: string; expires_at?: string; 
 type ResultState = { title: string; summary?: string; body: string } | null;
 
 function errorMessage(error: unknown, fallback: string) {
-  const response = (error as { response?: { data?: { error?: string; errors?: Array<{ message?: string }> } }; message?: string }).response;
-  return response?.data?.error || response?.data?.errors?.[0]?.message || (error as { message?: string }).message || fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function isEnabled(value: number | boolean | undefined) {

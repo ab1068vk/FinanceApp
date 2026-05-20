@@ -1,8 +1,9 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { body, param, query, validationResult } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const authController = require('../controllers/authController');
 const { requireAuth, requireNotImpersonated } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 
 const router = express.Router();
 const changePasswordAttempts = new Map();
@@ -109,21 +110,6 @@ const passwordRules = (fieldName) => body(fieldName)
   .bail()
   .matches(/[^A-Za-z0-9]/)
   .withMessage(`${fieldName} must contain at least one special character`);
-
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-
-  if (errors.isEmpty()) {
-    return next();
-  }
-
-  return res.status(400).json({
-    errors: errors.array().map((error) => ({
-      field: error.path,
-      message: error.msg,
-    })),
-  });
-};
 
 const emailRule = () => body('email')
   .isString()

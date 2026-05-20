@@ -82,7 +82,7 @@ describe('Edge Cases and Error Handling', () => {
 
     console.log('\nZERO AMOUNT REJECTION:', {
       status: response.status,
-      error: response.body.errors?.[0]?.message || response.body.error,
+      error: response.body.details?.[0]?.message || response.body.error,
     });
 
     expect(response.status).toBe(400);
@@ -113,7 +113,7 @@ describe('Edge Cases and Error Handling', () => {
 
     console.log('\nNEGATIVE AMOUNT REJECTION:', {
       status: response.status,
-      error: response.body.errors?.[0]?.message || response.body.error,
+      error: response.body.details?.[0]?.message || response.body.error,
     });
 
     expect(response.status).toBe(400);
@@ -210,7 +210,7 @@ describe('Edge Cases and Error Handling', () => {
 
     console.log('\nLARGE AMOUNT HANDLING:', {
       status: response.status,
-      error: response.body.errors?.[0]?.message || response.body.error,
+      error: response.body.details?.[0]?.message || response.body.error,
       note: 'Amounts above the configured business limit are rejected',
     });
 
@@ -308,7 +308,7 @@ describe('Edge Cases and Error Handling', () => {
       status: response.status,
       descriptionLength: longDesc.length,
       wasRejected: response.status === 400,
-      error: response.body.errors?.[0]?.message || response.body.error,
+      error: response.body.details?.[0]?.message || response.body.error,
     });
 
     expect(response.status).toBe(400);
@@ -366,7 +366,7 @@ describe('Edge Cases and Error Handling', () => {
     console.log('\nSAME ACCOUNT TRANSFER:', {
       status: response.status,
       wasRejected: response.status === 400,
-      error: response.body.error || response.body.errors?.[0]?.message,
+      error: response.body.error || response.body.details?.[0]?.message,
     });
 
     expect(response.status).toBe(400);

@@ -1,15 +1,11 @@
 ﻿const express = require('express');
-const { body, param, validationResult } = require('express-validator');
+const { body, param } = require('express-validator');
 const controller = require('../controllers/categoryController');
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 
 const router = express.Router();
 const types = ['income', 'expense'];
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({ errors: errors.array().map((e) => ({ field: e.path, message: e.msg })) });
-};
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
 const createRules = [
   body('name').trim().isLength({ min: 1, max: 50 }).withMessage('name must be 1-50 characters'),

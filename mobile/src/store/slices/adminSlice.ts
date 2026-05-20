@@ -1,5 +1,6 @@
 ﻿import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import api from '../../services/api';
+import { getApiErrorMessage } from '../../services/apiErrors';
 import { User } from './authSlice';
 import { Transaction } from './transactionsSlice';
 
@@ -168,12 +169,7 @@ const initialState: AdminState = {
 };
 
 function errorMessage(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error !== null && 'response' in error) {
-    const response = (error as { response?: { data?: { error?: string } } }).response;
-    return response?.data?.error || fallback;
-  }
-  if (error instanceof Error) return error.message;
-  return fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function cleanParams<T extends Record<string, unknown>>(params: T) {

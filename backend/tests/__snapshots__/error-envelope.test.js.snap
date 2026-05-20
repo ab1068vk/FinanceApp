@@ -1,0 +1,129 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`API error envelope account validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "name",
+      "message": "name must be 1-50 characters",
+    },
+    {
+      "field": "type",
+      "message": "type must be one of: checking, savings, credit, investment, cash",
+    },
+    {
+      "field": "currency",
+      "message": "Invalid value",
+    },
+    {
+      "field": "currency",
+      "message": "currency must be a 3-letter code",
+    },
+    {
+      "field": "color",
+      "message": "color must be a valid hex color",
+    },
+    {
+      "field": "icon",
+      "message": "icon must be a string",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope admin validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "role",
+      "message": "role must be one of: user, admin",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope announcement validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "id",
+      "message": "id must be a valid UUID",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope auth validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "email",
+      "message": "email must be a valid email address",
+    },
+    {
+      "field": "password",
+      "message": "password must be at least 8 characters long",
+    },
+    {
+      "field": "full_name",
+      "message": "full_name must be between 2 and 50 characters",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope budget validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "amount",
+      "message": "amount must be a positive number",
+    },
+    {
+      "field": "category_id",
+      "message": "category_id must be a valid UUID",
+    },
+    {
+      "field": "period",
+      "message": "period must be one of: monthly, weekly, yearly",
+    },
+    {
+      "field": "start_date",
+      "message": "start_date must be a valid ISO date",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope category validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "name",
+      "message": "name must be 1-50 characters",
+    },
+    {
+      "field": "type",
+      "message": "type must be one of: income, expense",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;
+
+exports[`API error envelope transaction validation uses the canonical validation envelope 1`] = `
+{
+  "details": [
+    {
+      "field": "page",
+      "message": "page must be a positive integer",
+    },
+  ],
+  "error": "Validation failed",
+}
+`;

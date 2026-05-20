@@ -268,9 +268,17 @@ app.use((err, req, res, _next) => {
     stack: err.stack,
   });
 
-  res.status(statusCode).json({
+  const payload = {
     error: statusCode === 500 ? 'Internal server error' : err.message,
-  });
+  };
+  if (Array.isArray(err.details) && err.details.length) {
+    payload.details = err.details.map((detail) => ({
+      field: detail.field,
+      message: detail.message,
+    }));
+  }
+
+  res.status(statusCode).json(payload);
 });
 
 module.exports = app;

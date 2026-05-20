@@ -1,6 +1,7 @@
 ﻿import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { API_BASE_URL } from '../constants';
 import { authActions, store } from '../store';
+import { attachApiErrorMessage } from './apiErrors';
 import { clearTokens, getTokens, saveTokens } from './secureStorage';
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
@@ -104,7 +105,7 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry) {
-      return Promise.reject(error);
+      return Promise.reject(attachApiErrorMessage(error));
     }
 
     originalRequest._retry = true;
@@ -144,7 +145,7 @@ api.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null);
       await clearAuthAndLogout();
-      return Promise.reject(refreshError);
+      return Promise.reject(attachApiErrorMessage(refreshError, 'Authentication failed'));
     } finally {
       isRefreshing = false;
     }

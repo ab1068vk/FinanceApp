@@ -1,6 +1,7 @@
 ﻿import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import axios, { AxiosError } from 'axios';
 import { API_BASE_URL } from '../../constants';
+import type { ApiErrorEnvelope } from '../../services/apiErrors';
 import { clearTokens, getTokens, getUser, saveTokens, saveUser } from '../../services/secureStorage';
 
 export type User = {
@@ -59,7 +60,7 @@ const initialState: AuthState = {
 
 function normalizeAuthError(error: unknown): ApiErrorPayload {
   if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError<{ error?: string; retryAfter?: { minutes?: number } }>;
+    const axiosError = error as AxiosError<ApiErrorEnvelope>;
     const status = axiosError.response?.status;
 
     if (!axiosError.response) {

@@ -213,8 +213,12 @@ function deleteAccount(req, res, next) {
     if (transactionCount > 0 && !transactionAction) {
       return res.status(400).json({
         error: 'Choose whether to delete this account transactions or move them to Cash',
-        transaction_count: transactionCount,
-        actions: ['delete', 'cash'],
+        details: [
+          {
+            field: 'transaction_action',
+            message: `Required when the account has ${transactionCount} transaction${transactionCount === 1 ? '' : 's'}; use delete or cash`,
+          },
+        ],
       });
     }
 

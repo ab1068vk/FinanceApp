@@ -1,15 +1,11 @@
 ﻿const express = require('express');
-const { body, param, query, validationResult } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const controller = require('../controllers/accountController');
 const { requireAuth, requireNotImpersonated } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 
 const router = express.Router();
 const validTypes = ['checking', 'savings', 'credit', 'investment', 'cash'];
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({ errors: errors.array().map((e) => ({ field: e.path, message: e.msg })) });
-};
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
 const moneyFormat = (field, { min, message }) => body(field)
   .optional()

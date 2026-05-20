@@ -168,7 +168,10 @@ describe('Authentication API', () => {
       full_name: 'Weak Password',
     }).expect(400);
 
-    expect(response.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'password' })]));
+    expect(response.body).toEqual({
+      error: 'Validation failed',
+      details: expect.arrayContaining([expect.objectContaining({ field: 'password' })]),
+    });
   });
 
   test('login with correct credentials returns tokens', async () => {

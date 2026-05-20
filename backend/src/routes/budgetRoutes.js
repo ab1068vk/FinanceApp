@@ -1,15 +1,11 @@
 ﻿const express = require('express');
-const { body, param, validationResult } = require('express-validator');
+const { body, param } = require('express-validator');
 const controller = require('../controllers/budgetController');
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 
 const router = express.Router();
 const periods = ['monthly', 'weekly', 'yearly'];
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({ errors: errors.array().map((e) => ({ field: e.path, message: e.msg })) });
-};
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
 const decimalAmount = (chain) => chain

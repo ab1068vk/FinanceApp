@@ -1,17 +1,13 @@
 ﻿const express = require('express');
-const { body, param, query, validationResult } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const controller = require('../controllers/transactionController');
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 
 const router = express.Router();
 const types = ['income', 'expense', 'transfer'];
 const MAX_TRANSACTION_AMOUNT = 100000000;
 const MAX_TRANSACTION_LIST_LIMIT = 200;
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({ errors: errors.array().map((e) => ({ field: e.path, message: e.msg })) });
-};
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');

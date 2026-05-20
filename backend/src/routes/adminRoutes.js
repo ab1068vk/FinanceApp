@@ -1,10 +1,11 @@
 ﻿const express = require('express');
-const { body, param, query, validationResult } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const net = require('net');
 const adminController = require('../controllers/adminController');
 const { requireAuth, requireAdmin, requireAdminScope } = require('../middleware/auth');
+const { validate } = require('../middleware/validateRequest');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 
 const router = express.Router();
@@ -36,11 +37,6 @@ function requireConfirmation(action) {
   };
 }
 
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({ errors: errors.array().map((error) => ({ field: error.path, message: error.msg })) });
-};
 const isIsoDate = (value) => !Number.isNaN(Date.parse(value));
 const idParam = param('id').isUUID().withMessage('id must be a valid UUID');
 const decimalMoney = (chain, field) => chain
