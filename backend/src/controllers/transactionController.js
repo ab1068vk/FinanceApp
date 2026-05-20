@@ -59,6 +59,11 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
 function getOwnedAccount(id, userId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ? AND is_active = 1').get(id, userId);
 }
+function getOwnedAccountForBalanceCheck(id, userId, message = 'Transaction account is unavailable') {
+  const account = getOwnedAccount(id, userId);
+  if (!account) throw Object.assign(new Error(message), { statusCode: 409 });
+  return account;
+}
 function getAllowedCategory(id, userId) {
   // FIX: 3
   return db.prepare('SELECT * FROM categories WHERE id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1').get(id, userId);
@@ -203,11 +208,12 @@ function createTransaction(req, res, next) {
 
     const created = [];
     db.transaction(() => {
+      const sourceAccount = getOwnedAccountForBalanceCheck(account.id, req.user.id);
       if (base.type === 'transfer') {
         const toAccount = getOwnedAccount(req.body.to_account_id, req.user.id);
         if (!toAccount) throw Object.assign(new Error('to_account_id must belong to the authenticated user'), { statusCode: 400 });
-        if (toAccount.id === account.id) throw Object.assign(new Error('to_account_id must be different from account_id'), { statusCode: 400 });
-        assertBalanceAllowed(account, -amount);
+        if (toAccount.id === sourceAccount.id) throw Object.assign(new Error('to_account_id must be different from account_id'), { statusCode: 400 });
+        assertBalanceAllowed(sourceAccount, -amount);
         const groupId = crypto.randomUUID();
         const sourceTx = {
           ...base,
@@ -221,23 +227,23 @@ function createTransaction(req, res, next) {
           account_id: toAccount.id,
           transfer_group_id: groupId,
           transfer_direction: 'destination',
-          from_account_id: account.id,
+          from_account_id: sourceAccount.id,
         };
         insertTransaction(sourceTx); insertTransaction(destTx);
-        updateBalance(account.id, req.user.id, -amount); updateBalance(toAccount.id, req.user.id, amount);
-        checkAccountConsistency(account.id, req.user.id, 'createTransfer');
+        updateBalance(sourceAccount.id, req.user.id, -amount); updateBalance(toAccount.id, req.user.id, amount);
+        checkAccountConsistency(sourceAccount.id, req.user.id, 'createTransfer');
         checkAccountConsistency(toAccount.id, req.user.id, 'createTransfer');
         audit(req, 'TRANSACTION_CREATED', 'transaction', sourceTx.id, null, { source: sourceTx, destination: destTx });
         created.push(sourceTx, destTx);
       } else {
-        assertBalanceAllowed(account, computeBalanceDelta(base));
+        assertBalanceAllowed(sourceAccount, computeBalanceDelta(base));
         insertTransaction(base);
-        updateBalance(account.id, req.user.id, computeBalanceDelta(base));
-        checkAccountConsistency(account.id, req.user.id, 'createTransaction');
+        updateBalance(sourceAccount.id, req.user.id, computeBalanceDelta(base));
+        checkAccountConsistency(sourceAccount.id, req.user.id, 'createTransaction');
         audit(req, 'TRANSACTION_CREATED', 'transaction', base.id, null, base);
         created.push(base);
       }
-    })();
+    }).immediate();
 
     const hydrated = getTransactionsWithDetails(created.map((transaction) => transaction.id), req.user.id);
     created.forEach((transaction) => notifyBudgetOverspendIfNeeded(req.user.id, transaction));
@@ -340,8 +346,7 @@ function updateTransaction(req, res, next) {
           }
 
           for (const item of related) {
-            const account = getOwnedAccount(item.account_id, req.user.id);
-            if (!account) throw Object.assign(new Error('Transfer account is unavailable'), { statusCode: 409 });
+            const account = getOwnedAccountForBalanceCheck(item.account_id, req.user.id, 'Transfer account is unavailable');
             const delta = computeBalanceDelta({ ...item, amount: nextAmount }) - computeBalanceDelta(item);
             assertBalanceAllowed(account, delta);
           }
@@ -355,8 +360,7 @@ function updateTransaction(req, res, next) {
             .run(nextAmount, updates.updated_at, req.user.id, groupId);
           related.forEach((item) => checkAccountConsistency(item.account_id, req.user.id, 'updateTransferAmount'));
         } else {
-          const account = getOwnedAccount(oldTx.account_id, req.user.id);
-          if (!account) throw Object.assign(new Error('Transaction account is unavailable'), { statusCode: 409 });
+          const account = getOwnedAccountForBalanceCheck(oldTx.account_id, req.user.id);
           const delta = computeBalanceDelta({ ...oldTx, amount: nextAmount }) - computeBalanceDelta(oldTx);
           assertBalanceAllowed(account, delta);
           updateBalance(oldTx.account_id, req.user.id, delta);
@@ -371,7 +375,7 @@ function updateTransaction(req, res, next) {
       }
 
       accountsToCheck.forEach((accountId) => checkAccountConsistency(accountId, req.user.id, 'updateTransactionAmount'));
-    })();
+    }).immediate();
 
     const newTx = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? AND admin_deleted_at IS NULL').get(req.params.id, req.user.id);
     audit(req, 'TRANSACTION_UPDATED', 'transaction', req.params.id, oldTx, newTx);
@@ -550,5 +554,8 @@ module.exports = {
   bulkDeleteTransactions,
   bulkUpdateTransactionCategory,
   getTransactionSummary,
+  __private: {
+    assertBalanceAllowed,
+  },
 };
 

@@ -23,11 +23,11 @@ async function createSession(label) {
   return { ...login.body, credentials };
 }
 
-async function createAccount(accessToken, name = 'Checking') {
+async function createAccount(accessToken, name = 'Checking', overrides = {}) {
   const response = await request(app)
     .post('/api/accounts')
     .set('Authorization', `Bearer ${accessToken}`)
-    .send({ name, type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card' })
+    .send({ name, type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card', ...overrides })
     .expect(201);
   return response.body;
 }
@@ -421,6 +421,71 @@ describe('Transactions API', () => {
       .expect(200);
 
     expect(summary.body.grouped_by_category.some((item) => item.type === 'transfer')).toBe(false);
+  });
+
+  test('concurrent expenses cannot overdraw a protected account beyond its limit', async () => {
+    const protectedAccount = await createAccount(userOne.accessToken, 'Concurrent Expense Guard', {
+      balance: 100,
+      overdraft_limit: 0,
+    });
+
+    const payload = {
+      account_id: protectedAccount.id,
+      category_id: category.id,
+      type: 'expense',
+      amount: 75,
+      description: 'Concurrent guarded expense',
+      date: new Date().toISOString(),
+    };
+
+    const responses = await Promise.all([
+      request(app).post('/api/transactions').set('Authorization', `Bearer ${userOne.accessToken}`).send(payload),
+      request(app).post('/api/transactions').set('Authorization', `Bearer ${userOne.accessToken}`).send(payload),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 400]);
+    const after = await request(app)
+      .get(`/api/accounts/${protectedAccount.id}`)
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .expect(200);
+
+    expect(Number(after.body.current_balance)).toBeCloseTo(25);
+  });
+
+  test('concurrent transfers cannot overdraw the source account beyond its limit', async () => {
+    const source = await createAccount(userOne.accessToken, 'Concurrent Transfer Source', {
+      balance: 100,
+      overdraft_limit: 0,
+    });
+    const destination = await createAccount(userOne.accessToken, 'Concurrent Transfer Destination');
+
+    const payload = {
+      account_id: source.id,
+      to_account_id: destination.id,
+      type: 'transfer',
+      amount: 75,
+      description: 'Concurrent guarded transfer',
+      date: new Date().toISOString(),
+    };
+
+    const responses = await Promise.all([
+      request(app).post('/api/transactions').set('Authorization', `Bearer ${userOne.accessToken}`).send(payload),
+      request(app).post('/api/transactions').set('Authorization', `Bearer ${userOne.accessToken}`).send(payload),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 400]);
+
+    const sourceAfter = await request(app)
+      .get(`/api/accounts/${source.id}`)
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .expect(200);
+    const destinationAfter = await request(app)
+      .get(`/api/accounts/${destination.id}`)
+      .set('Authorization', `Bearer ${userOne.accessToken}`)
+      .expect(200);
+
+    expect(Number(sourceAfter.body.current_balance)).toBeCloseTo(25);
+    expect(Number(destinationAfter.body.current_balance)).toBeCloseTo(75);
   });
 
   test('bulk category update changes selected transactions', async () => {
