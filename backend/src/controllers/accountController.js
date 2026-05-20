@@ -8,6 +8,7 @@ const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpd
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
 const { amountToCents, computeBalanceDelta, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
+const { assertNoIncompleteTransferGroupsForAccount } = require('../utils/transferIntegrity');
 
 const NON_NEGATIVE_ACCOUNT_TYPES = new Set(['checking', 'savings', 'cash']);
 
@@ -77,6 +78,7 @@ function moveAccountTransactionsToCash(accountId, userId) {
     }
 
     const direct = db.prepare('SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND admin_deleted_at IS NULL').all(accountId, userId);
+    assertNoIncompleteTransferGroupsForAccount(accountId, userId);
     const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 

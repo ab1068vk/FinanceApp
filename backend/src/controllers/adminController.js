@@ -22,6 +22,7 @@ const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = r
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { deliverAdminTemporaryPassword } = require('../utils/passwordResetDelivery');
+const { assertNoIncompleteTransferGroupsForAccount } = require('../utils/transferIntegrity');
 
 const backendRoot = path.join(__dirname, '..', '..');
 const logDir = path.join(backendRoot, 'logs');
@@ -418,6 +419,7 @@ function moveAccountTransactionsToCash(accountId, userId) {
     if (cashAccount.id === accountId) throw Object.assign(new Error('The default cash account cannot be attached to itself'), { statusCode: 400 });
 
     const direct = db.prepare(`SELECT * FROM transactions WHERE account_id = ? AND user_id = ? AND ${TX_NOT_DELETED}`).all(accountId, userId);
+    assertNoIncompleteTransferGroupsForAccount(accountId, userId);
     const movedDelta = direct.reduce((sum, transaction) => sum + computeBalanceDelta(transaction), 0);
     const updatedAt = nowIso();
 
