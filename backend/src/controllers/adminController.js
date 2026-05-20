@@ -40,6 +40,10 @@ const AVAILABLE_TOKEN_SCOPES = [
 const AVAILABLE_TOKEN_SCOPE_SET = new Set(AVAILABLE_TOKEN_SCOPES);
 const TX_NOT_DELETED = 'admin_deleted_at IS NULL';
 const TX_NOT_DELETED_T = 't.admin_deleted_at IS NULL';
+const REPORT_CSV_HEADERS = {
+  monthly: ['month', 'income', 'expense', 'net', 'count'],
+  categories: ['category_name', 'type', 'count', 'total'],
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -1807,7 +1811,6 @@ function getReports(req, res, next) {
 function exportReportCsv(req, res, next) {
   try {
     const type = req.query.type || 'monthly';
-    const dataReq = { ...req, query: {} };
     const rows = type === 'categories'
       ? db.prepare(`
         SELECT COALESCE(c.name, 'Uncategorized') AS category_name, t.type, COUNT(*) AS count, COALESCE(SUM(t.amount), 0) AS total
@@ -1822,11 +1825,8 @@ function exportReportCsv(req, res, next) {
           COUNT(*) AS count
         FROM transactions WHERE ${TX_NOT_DELETED} GROUP BY substr(date, 1, 7) ORDER BY month DESC
       `).all().map((row) => ({ ...row, net: Number(row.income || 0) - Number(row.expense || 0) }));
-    void dataReq;
     const serializedRows = serializeMoney(rows);
-    const headers = type === 'monthly'
-      ? ['month', 'income', 'expense', 'net', 'count']
-      : Object.keys(serializedRows[0] || { empty: '' });
+    const headers = REPORT_CSV_HEADERS[type] || REPORT_CSV_HEADERS.monthly;
     const csv = [headers.join(','), ...serializedRows.map((row) => headers.map((key) => JSON.stringify(row[key] ?? '')).join(','))].join('\n');
     audit(req, 'ADMIN_EXPORTED_REPORT_CSV', 'report', String(type), null, { rows: rows.length });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
