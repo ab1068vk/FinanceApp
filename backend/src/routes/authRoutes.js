@@ -2,7 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { body, param, query, validationResult } = require('express-validator');
 const authController = require('../controllers/authController');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireNotImpersonated } = require('../middleware/auth');
 
 const router = express.Router();
 const changePasswordAttempts = new Map();
@@ -212,7 +212,7 @@ router.post('/resend-verification', emailVerificationLimiter, forgotPasswordVali
 router.get('/csrf', authController.getCsrfToken);
 router.post('/refresh', refreshLimiter, [refreshTokenRule()], validate, authController.refreshToken);
 router.post('/logout', requireAuth, [refreshTokenRule()], validate, authController.logout);
-router.put('/change-password', requireAuth, changePasswordLimiter, changePasswordValidation, validate, authController.changePassword);
+router.put('/change-password', requireAuth, requireNotImpersonated, changePasswordLimiter, changePasswordValidation, validate, authController.changePassword);
 router.get('/me', requireAuth, authController.getMe);
 router.get('/sessions', requireAuth, authController.getSessions);
 router.delete('/sessions/others', requireAuth, [refreshTokenRule()], validate, authController.revokeOtherSessions);
@@ -234,9 +234,9 @@ router.get('/notifications', requireAuth, [
 router.patch('/notifications/:id/read', requireAuth, [
   param('id').isUUID().withMessage('id must be a valid UUID'),
 ], validate, authController.markNotificationRead);
-router.get('/data', requireAuth, authController.exportMyData);
-router.delete('/data', requireAuth, authController.deleteMyData);
-router.delete('/account', requireAuth, [
+router.get('/data', requireAuth, requireNotImpersonated, authController.exportMyData);
+router.delete('/data', requireAuth, requireNotImpersonated, authController.deleteMyData);
+router.delete('/account', requireAuth, requireNotImpersonated, [
   body('confirmation').equals('DELETE').withMessage('Type DELETE to confirm account deletion'),
 ], validate, authController.deleteMyAccount);
 router.patch('/me', requireAuth, [

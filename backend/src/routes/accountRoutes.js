@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const controller = require('../controllers/accountController');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireNotImpersonated } = require('../middleware/auth');
 
 const router = express.Router();
 const validTypes = ['checking', 'savings', 'credit', 'investment', 'cash'];
@@ -66,7 +66,7 @@ router.get('/', controller.getAccounts);
 router.post('/', createRules, validate, controller.createAccount);
 router.get('/:id', idParam, validate, controller.getAccount);
 router.put('/:id', updateRules, validate, controller.updateAccount);
-router.delete('/:id', deleteRules, validate, controller.deleteAccount);
+router.delete('/:id', requireNotImpersonated, deleteRules, validate, controller.deleteAccount);
 
 module.exports = router;
 

@@ -6,7 +6,7 @@ const zlib = require('zlib');
 const v8 = require('v8');
 const { db, dbPath } = require('../../database/db');
 const logger = require('../utils/logger');
-const { generateAccessToken, hashPassword, hashToken, encryptSecret, sanitizeUser } = require('../utils/security');
+const { generateImpersonationToken, hashPassword, hashToken, encryptSecret, sanitizeUser } = require('../utils/security');
 const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
@@ -99,6 +99,29 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
     entityId,
     serializeAuditValue(oldValue),
     serializeAuditValue(newValue),
+    clientIp(req),
+    req.get('user-agent') || null,
+    nowIso()
+  );
+}
+
+function auditImpersonationForUser(req, targetUser, reason) {
+  db.prepare(`
+    INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, old_value, new_value, ip_address, user_agent, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    targetUser.id,
+    'USER_IMPERSONATION_STARTED',
+    'user',
+    targetUser.id,
+    null,
+    serializeAuditValue({
+      impersonated_by: req.user.id,
+      impersonated_by_email: req.user.email,
+      reason,
+      expires_in: '5m',
+    }),
     clientIp(req),
     req.get('user-agent') || null,
     nowIso()
@@ -2065,7 +2088,7 @@ function impersonateUser(req, res, next) {
     const user = assertUserExists(req.params.id);
     if (!user || !user.is_active) return res.status(404).json({ error: 'Active user not found' });
     const warning = 'Support impersonation is sensitive. All use must be justified and audited.';
-    const token = generateAccessToken({
+    const token = generateImpersonationToken({
       sub: user.id,
       email: user.email,
       role: user.role,
@@ -2074,8 +2097,9 @@ function impersonateUser(req, res, next) {
       impersonated_by: req.user.id,
       impersonation_reason: req.body.reason,
     });
-    audit(req, 'ADMIN_STARTED_IMPERSONATION', 'user', user.id, null, { reason: req.body.reason, expires_in: '15m' });
-    return res.json({ accessToken: token, user: sanitizeUser(user), expires_in: '15m', warning });
+    audit(req, 'ADMIN_STARTED_IMPERSONATION', 'user', user.id, null, { reason: req.body.reason, expires_in: '5m', is_impersonated: true });
+    auditImpersonationForUser(req, user, req.body.reason);
+    return res.json({ accessToken: token, user: sanitizeUser(user), expires_in: '5m', warning });
   } catch (error) {
     return next(error);
   }

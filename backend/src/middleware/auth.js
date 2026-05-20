@@ -105,6 +105,7 @@ function requireAuth(req, res, next) {
     }
 
     req.auth = decoded;
+    req.impersonated = decoded.is_impersonated === true;
     req.accessToken = token;
     req.user = sanitizeUser(user);
     return next();
@@ -126,6 +127,10 @@ function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (req.impersonated) {
+    return res.status(403).json({ error: 'Admin access is not available under impersonation' });
   }
 
   if (req.user.role !== 'admin') {
@@ -170,9 +175,17 @@ function requireOwnership(getOwnerId) {
   };
 }
 
+function requireNotImpersonated(req, res, next) {
+  if (req.impersonated) {
+    return res.status(403).json({ error: 'This action cannot be performed under impersonation' });
+  }
+  return next();
+}
+
 module.exports = {
   requireAuth,
   requireAdmin,
   requireAdminScope,
+  requireNotImpersonated,
   requireOwnership,
 };

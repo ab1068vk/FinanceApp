@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { db } = require('../../database/db');
-const { serializeAuditValue } = require('../utils/audit');
+const { addImpersonationAuditContext, serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { amountToCents, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
@@ -11,7 +11,7 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     crypto.randomUUID(), req.user.id, action, entityType, entityId,
     serializeAuditValue(oldValue),
-    serializeAuditValue(newValue),
+    serializeAuditValue(addImpersonationAuditContext(req, newValue)),
     clientIp(req), req.get('user-agent') || null, nowIso()
   );
 }

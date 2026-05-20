@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const request = require('supertest');
 
 process.env.NODE_ENV = 'test';
@@ -599,6 +600,76 @@ describe('Admin API', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .expect(200);
     expect(adminDeleted.body.data.some((tx) => tx.id === createdTx.id)).toBe(true);
+  });
+
+  test('admin impersonation tokens are short-lived, audited, and blocked from sensitive actions', async () => {
+    const target = await createUserSession('impersonation-target');
+    const impersonation = await request(app)
+      .post(`/api/admin/users/${target.user.id}/impersonate`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ reason: 'Support reproduction' })
+      .expect(200);
+
+    expect(impersonation.body.expires_in).toBe('5m');
+    const decoded = jwt.decode(impersonation.body.accessToken);
+    expect(decoded).toEqual(expect.objectContaining({
+      sub: target.user.id,
+      is_impersonated: true,
+      impersonated_by: admin.user.id,
+      impersonation_reason: 'Support reproduction',
+    }));
+    expect(decoded.exp - decoded.iat).toBeLessThanOrEqual(300);
+    expect(decoded.exp - decoded.iat).toBeGreaterThan(240);
+
+    await request(app)
+      .delete('/api/auth/account')
+      .set('Authorization', `Bearer ${impersonation.body.accessToken}`)
+      .send({ confirmation: 'DELETE' })
+      .expect(403);
+
+    await request(app)
+      .delete('/api/auth/data')
+      .set('Authorization', `Bearer ${impersonation.body.accessToken}`)
+      .expect(403);
+
+    await request(app)
+      .put('/api/auth/change-password')
+      .set('Authorization', `Bearer ${impersonation.body.accessToken}`)
+      .send({ currentPassword: target.credentials.password, newPassword: 'ChangedPass1!' })
+      .expect(403);
+
+    const createdAccount = await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${impersonation.body.accessToken}`)
+      .send({ name: 'Support Visible Account', type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card' })
+      .expect(201);
+
+    await request(app)
+      .delete(`/api/accounts/${createdAccount.body.id}`)
+      .set('Authorization', `Bearer ${impersonation.body.accessToken}`)
+      .expect(403);
+
+    const accountAudit = db.prepare(`
+      SELECT new_value FROM audit_logs
+      WHERE user_id = ? AND action = 'ACCOUNT_CREATED'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(target.user.id);
+    expect(JSON.parse(accountAudit.new_value)).toEqual(expect.objectContaining({
+      impersonated_by: admin.user.id,
+      impersonation_reason: 'Support reproduction',
+    }));
+
+    const visibleLog = db.prepare(`
+      SELECT new_value FROM audit_logs
+      WHERE user_id = ? AND action = 'USER_IMPERSONATION_STARTED'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(target.user.id);
+    expect(JSON.parse(visibleLog.new_value)).toEqual(expect.objectContaining({
+      impersonated_by: admin.user.id,
+      expires_in: '5m',
+    }));
   });
 
   test('admin soft-delete fails without partial commit when the transaction account was hard-deleted', async () => {

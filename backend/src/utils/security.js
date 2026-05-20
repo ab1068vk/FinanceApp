@@ -41,6 +41,24 @@ function generateAccessToken(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, options);
 }
 
+function generateImpersonationToken(payload) {
+  assertJwtSecret();
+
+  if (!payload || typeof payload.sub !== 'string' || !payload.sub) {
+    throw new Error('Impersonation token payload must include a subject in the sub claim');
+  }
+
+  const options = {
+    algorithm: JWT_ALGORITHM,
+    expiresIn: '5m',
+    jwtid: crypto.randomUUID(),
+  };
+  if (process.env.JWT_ISSUER) options.issuer = process.env.JWT_ISSUER;
+  if (process.env.JWT_AUDIENCE) options.audience = process.env.JWT_AUDIENCE;
+
+  return jwt.sign({ ...payload, is_impersonated: true }, process.env.JWT_SECRET, options);
+}
+
 function generateRefreshToken() {
   return crypto.randomBytes(64).toString('hex');
 }
@@ -108,6 +126,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   generateAccessToken,
+  generateImpersonationToken,
   generateRefreshToken,
   hashToken,
   encryptSecret,

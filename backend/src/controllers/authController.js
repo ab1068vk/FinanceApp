@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { db } = require('../../database/db');
-const { serializeAuditValue } = require('../utils/audit');
+const { addImpersonationAuditContext, serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockAccessToken } = require('../utils/accessTokenBlocklist');
 const logger = require('../utils/logger');
@@ -65,7 +65,7 @@ function writeAuditLog(req, { userId, action, entityType = null, entityId = null
     entityType,
     entityId,
     serializeAuditValue(oldValue),
-    serializeAuditValue(newValue),
+    serializeAuditValue(addImpersonationAuditContext(req, newValue)),
     clientIp(req),
     req.get('user-agent') || null,
     nowIso()

@@ -40,7 +40,20 @@ function serializeAuditValue(value) {
   return JSON.stringify(redactValue(value));
 }
 
+function addImpersonationAuditContext(req, value) {
+  if (!req?.impersonated) return value;
+  const context = {
+    impersonated_by: req.auth?.impersonated_by || null,
+    impersonation_reason: req.auth?.impersonation_reason || null,
+  };
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return { ...value, ...context };
+  }
+  return { value, ...context };
+}
+
 module.exports = {
+  addImpersonationAuditContext,
   maskEmail,
   redactValue,
   serializeAuditValue,

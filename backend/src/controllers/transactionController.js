@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { db } = require('../../database/db');
 const logger = require('../utils/logger');
-const { serializeAuditValue } = require('../utils/audit');
+const { addImpersonationAuditContext, serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const {
   getAccountBalanceSnapshot,
@@ -53,7 +53,7 @@ function audit(req, action, entityType, entityId, oldValue = null, newValue = nu
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     crypto.randomUUID(), req.user.id, action, entityType, entityId,
     serializeAuditValue(oldValue),
-    serializeAuditValue(newValue),
+    serializeAuditValue(addImpersonationAuditContext(req, newValue)),
     clientIp(req), req.get('user-agent') || null, nowIso()
   );
 }
