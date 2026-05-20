@@ -11,7 +11,7 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { accountCurrentBalanceExpr } = require('../utils/accountBalance');
+const { accountCurrentBalanceExpr, reconcileAccountBalances } = require('../utils/accountBalance');
 const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
 const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
@@ -1706,6 +1706,27 @@ function runIntegrityCheck(req, res, next) {
   }
 }
 
+function reconcileDatabaseBalances(req, res, next) {
+  try {
+    const autoRepair = parseBoolField(req.body?.auto_repair);
+    const maxAutoRepairCents = autoRepair ? amountToCents(req.body?.max_auto_repair || 0) : 0;
+    const result = reconcileAccountBalances({
+      autoRepair: Boolean(autoRepair),
+      maxAutoRepairCents,
+      source: 'admin-api',
+    });
+    audit(req, 'ADMIN_RECONCILED_ACCOUNT_BALANCES', 'database', 'account_balances', null, {
+      drift_count: result.drift_count,
+      repaired_count: result.repaired_count,
+      auto_repair: result.auto_repair,
+      max_auto_repair_cents: result.max_auto_repair_cents,
+    });
+    return res.json(serializeMoney(result));
+  } catch (error) {
+    return next(error);
+  }
+}
+
 function vacuumDatabase(req, res, next) {
   try {
     const before = getDbSizeMb();
@@ -2142,6 +2163,7 @@ module.exports = {
   getSystemConfig,
   updateSystemConfig,
   runIntegrityCheck,
+  reconcileDatabaseBalances,
   vacuumDatabase,
   downloadDatabaseBackup,
   getReports,

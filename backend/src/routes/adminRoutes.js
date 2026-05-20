@@ -200,6 +200,10 @@ router.post('/audit-retention/purge', destructiveAdminLimiter, requireAdminScope
 router.get('/system-config', adminController.getSystemConfig);
 router.put('/system-config', systemConfigRules, validate, adminController.updateSystemConfig);
 router.post('/database/integrity-check', adminController.runIntegrityCheck);
+router.post('/database/reconcile', requireAdminScope('db:maintenance'), [
+  body('auto_repair').optional().isBoolean().withMessage('auto_repair must be boolean').toBoolean(),
+  body('max_auto_repair').optional().isFloat({ min: 0 }).withMessage('max_auto_repair must be a non-negative amount'),
+], validate, adminController.reconcileDatabaseBalances);
 router.post('/database/vacuum', destructiveAdminLimiter, requireAdminScope('db:maintenance'), requireConfirmation('db_vacuum'), adminController.vacuumDatabase);
 router.get('/database/backup', requireAdminScope('db:backup'), adminController.downloadDatabaseBackup);
 router.get('/reports', adminController.getReports);

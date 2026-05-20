@@ -2,6 +2,7 @@ const dotenv = require('dotenv');
 const logger = require('./utils/logger');
 const { assertJwtSecret } = require('./utils/security');
 const { processRecurringTransactions } = require('./utils/recurringProcessor');
+const { reconcileAccountBalances } = require('./utils/accountBalance');
 const { runDatabaseBackup } = require('./utils/backup');
 
 dotenv.config();
@@ -93,6 +94,7 @@ const REFRESH_TOKEN_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const DELETED_USER_ARCHIVE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RECURRING_TRANSACTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const BALANCE_RECONCILE_INTERVAL_MS = Number(process.env.BALANCE_RECONCILE_INTERVAL_MS) || 6 * 60 * 60 * 1000;
 
 function cleanupRefreshTokens() {
   const now = new Date().toISOString();
@@ -143,6 +145,31 @@ const recurringTransactionTimer = setInterval(() => {
 }, RECURRING_TRANSACTION_INTERVAL_MS);
 recurringTransactionTimer.unref();
 
+function runBalanceReconciliation() {
+  const autoRepair = String(process.env.BALANCE_RECONCILE_AUTO_REPAIR || 'false').toLowerCase() === 'true';
+  const maxAutoRepairCents = Math.max(Math.round(Number(process.env.BALANCE_RECONCILE_MAX_AUTO_REPAIR || 0) * 100), 0);
+  return reconcileAccountBalances({
+    autoRepair,
+    maxAutoRepairCents,
+    source: 'scheduled-job',
+  });
+}
+
+try {
+  runBalanceReconciliation();
+} catch (error) {
+  logger.error('Account balance reconciliation failed', { error: error.message });
+}
+
+const balanceReconcileTimer = setInterval(() => {
+  try {
+    runBalanceReconciliation();
+  } catch (error) {
+    logger.error('Account balance reconciliation failed', { error: error.message });
+  }
+}, BALANCE_RECONCILE_INTERVAL_MS);
+balanceReconcileTimer.unref();
+
 let lastBackupDate = null;
 function backupDue(now = new Date()) {
   const backupHour = Math.min(Math.max(Number(process.env.BACKUP_HOUR || 3), 0), 23);
@@ -187,6 +214,7 @@ function shutdown(reason, error, exitCode = 1) {
   clearInterval(refreshTokenCleanupTimer);
   clearInterval(deletedUserArchiveCleanupTimer);
   clearInterval(recurringTransactionTimer);
+  clearInterval(balanceReconcileTimer);
   clearInterval(backupTimer);
 
   server.close(() => {

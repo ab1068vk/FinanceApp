@@ -1,6 +1,8 @@
 const MONEY_RESPONSE_KEYS = new Set([
   'amount',
   'balance',
+  'stored_balance',
+  'derived_balance',
   'overdraft_limit',
   'current_balance',
   'current_spending',
@@ -15,6 +17,7 @@ const MONEY_RESPONSE_KEYS = new Set([
   'overBy',
   'target_balance',
   'delta',
+  'difference',
   'total_income',
   'total_expense',
   'total_account_balance',

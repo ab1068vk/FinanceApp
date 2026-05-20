@@ -1092,14 +1092,87 @@ function recordSchemaVersion(version) {
   `).run(version, timestampNow());
 }
 
+function ensureSchemaVersionTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+}
+
+function currentSchemaVersion() {
+  try {
+    const row = db.prepare('SELECT version FROM schema_version WHERE id = 1').get();
+    return Number(row?.version) || 0;
+  } catch (error) {
+    if (error.code === 'SQLITE_ERROR' && /no such table/i.test(error.message)) return 0;
+    throw error;
+  }
+}
+
+const schemaMigrations = [
+  {
+    version: 1,
+    up() {
+      createTables();
+      ensureSchemaUpdates();
+    },
+  },
+  {
+    version: 2,
+    up() {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS account_balance_drifts (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          stored_balance INTEGER NOT NULL,
+          derived_balance INTEGER NOT NULL,
+          difference INTEGER NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('open', 'repaired')),
+          source TEXT,
+          detected_at TEXT NOT NULL,
+          repaired_at TEXT,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_account_balance_drifts_open_account
+          ON account_balance_drifts(account_id)
+          WHERE status = 'open';
+        CREATE INDEX IF NOT EXISTS idx_account_balance_drifts_status ON account_balance_drifts(status, detected_at);
+        CREATE INDEX IF NOT EXISTS idx_account_balance_drifts_user ON account_balance_drifts(user_id, status);
+      `);
+    },
+  },
+];
+
+function runSchemaMigrations(migrations = schemaMigrations) {
+  ensureSchemaVersionTable();
+  const orderedMigrations = [...migrations].sort((left, right) => left.version - right.version);
+  let version = currentSchemaVersion();
+
+  for (const migration of orderedMigrations) {
+    if (migration.version <= version) continue;
+
+    db.transaction(() => {
+      migration.up();
+      recordSchemaVersion(migration.version);
+    })();
+    version = migration.version;
+  }
+
+  return version;
+}
+
 function migrate() {
-  createTables();
-  ensureSchemaUpdates();
+  runSchemaMigrations();
   seedDefaultCategories();
   seedAdminAccount();
   seedDefaultCashAccounts();
   purgeDeletedUserArchives();
-  recordSchemaVersion(1);
 }
 
 migrate();
@@ -1107,8 +1180,12 @@ migrate();
 module.exports = {
   db,
   dbPath,
+  currentSchemaVersion,
   migrateMoneyColumnsToCents,
   migrate,
   purgeDeletedUserArchives,
+  recordSchemaVersion,
+  runSchemaMigrations,
+  schemaMigrations,
 };
 
