@@ -7,6 +7,7 @@ const {
   getAccountBalanceSnapshot,
   warnIfAccountBalanceMismatch,
 } = require('../utils/accountBalance');
+const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
 const { amountToCents, centsToAmount, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { sendPushNotification } = require('../utils/pushNotifications');
@@ -110,7 +111,8 @@ function updateBalance(accountId, userId, delta) {
   if (!db.inTransaction) {
     logger.warn('Account balance updated outside transaction', { accountId, userId, delta });
   }
-  db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?').run(delta, nowIso(), accountId, userId);
+  const result = db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?').run(delta, nowIso(), accountId, userId);
+  assertSingleAccountBalanceUpdate(result, { accountId, userId, delta, operation: 'transaction.updateBalance' });
 }
 function insertTransaction(tx) {
   db.prepare(`INSERT INTO transactions (
@@ -556,6 +558,7 @@ module.exports = {
   getTransactionSummary,
   __private: {
     assertBalanceAllowed,
+    updateBalance,
   },
 };
 

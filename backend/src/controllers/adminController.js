@@ -12,6 +12,7 @@ const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
 const { accountCurrentBalanceExpr } = require('../utils/accountBalance');
+const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
 const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
@@ -350,8 +351,8 @@ function userDateFilters(req, column, params) {
 }
 
 function updateStoredBalance(accountId, userId, delta) {
-  if (!accountId) return;
-  db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?').run(delta, nowIso(), accountId, userId);
+  const result = db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?').run(delta, nowIso(), accountId, userId);
+  assertSingleAccountBalanceUpdate(result, { accountId, userId, delta, operation: 'admin.updateStoredBalance' });
 }
 
 function transactionsForAccountDelete(accountId, userId) {
@@ -1255,6 +1256,13 @@ function adminSoftDeleteTransaction(req, res, next) {
     const deletedAt = nowIso();
     db.transaction(() => {
       for (const item of related) {
+        if (!item.account_id) {
+          logger.warn('Admin soft delete blocked because transaction account is missing', {
+            transactionId: item.id,
+            userId: item.user_id,
+            accountId: item.account_id,
+          });
+        }
         updateStoredBalance(item.account_id, item.user_id, -computeBalanceDelta(item));
         db.prepare(`
           UPDATE transactions
@@ -1410,7 +1418,13 @@ function createAccountBalanceCorrection(req, res, next) {
           @to_account_id, @from_account_id, @created_at, @updated_at
         )
       `).run(correction);
-      db.prepare('UPDATE accounts SET balance = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(targetBalance, now, account.id, req.params.id);
+      const balanceResult = db.prepare('UPDATE accounts SET balance = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(targetBalance, now, account.id, req.params.id);
+      assertSingleAccountBalanceUpdate(balanceResult, {
+        accountId: account.id,
+        userId: req.params.id,
+        targetBalance,
+        operation: 'admin.createAccountBalanceCorrection',
+      });
       audit(req, 'ADMIN_CREATED_BALANCE_CORRECTION', 'account', account.id, { balance: account.balance, current_balance: derivedBalance }, { target_balance: targetBalance, delta, reason, transaction_id: correction.id });
     })();
     return res.status(201).json(serializeMoney({ transaction: correction, account: db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id) }));

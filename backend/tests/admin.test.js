@@ -601,6 +601,38 @@ describe('Admin API', () => {
     expect(adminDeleted.body.data.some((tx) => tx.id === createdTx.id)).toBe(true);
   });
 
+  test('admin soft-delete fails without partial commit when the transaction account was hard-deleted', async () => {
+    const target = await createUserSession('missing-account-soft-delete');
+    const account = await createAccount(target.accessToken);
+    const category = await getExpenseCategory(target.accessToken);
+    const created = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${target.accessToken}`)
+      .send({
+        account_id: account.id,
+        category_id: category.id,
+        type: 'expense',
+        amount: 7,
+        description: 'Missing account reversal',
+        date: new Date().toISOString(),
+      })
+      .expect(201);
+    const transaction = createdTransaction(created.body);
+
+    db.prepare('DELETE FROM accounts WHERE id = ? AND user_id = ?').run(account.id, target.user.id);
+    expect(db.prepare('SELECT account_id FROM transactions WHERE id = ?').get(transaction.id).account_id).toBeNull();
+
+    await request(app)
+      .delete(`/api/admin/transactions/${transaction.id}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ reason: 'Missing account integrity check' })
+      .expect(500);
+
+    const stored = db.prepare('SELECT admin_deleted_at, admin_deleted_by, admin_delete_reason FROM transactions WHERE id = ?').get(transaction.id);
+    expect(stored).toEqual({ admin_deleted_at: null, admin_deleted_by: null, admin_delete_reason: null });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND entity_id = ?').get('ADMIN_SOFT_DELETED_TRANSACTION', transaction.id).count).toBe(0);
+  });
+
   test('admin date-only range filters include the full selected day', async () => {
     const target = await createUserSession('date-range');
     const account = await createAccount(target.accessToken);

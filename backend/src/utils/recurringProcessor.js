@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { db } = require('../../database/db');
 const logger = require('./logger');
+const { assertSingleAccountBalanceUpdate } = require('./accountBalanceUpdate');
 const { sendPushNotification } = require('./pushNotifications');
 
 const NON_NEGATIVE_ACCOUNT_TYPES = new Set(['checking', 'savings', 'cash']);
@@ -133,8 +134,15 @@ function processRule(rule, today) {
         @to_account_id, @from_account_id, @created_at, @updated_at
       )
     `).run(transaction);
-    db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?')
-      .run(balanceDelta(rule), processedAt, rule.account_id, rule.user_id);
+    const delta = balanceDelta(rule);
+    const balanceResult = db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(delta, processedAt, rule.account_id, rule.user_id);
+    assertSingleAccountBalanceUpdate(balanceResult, {
+      accountId: rule.account_id,
+      userId: rule.user_id,
+      delta,
+      operation: 'recurring.processRule',
+    });
     db.prepare(`
       UPDATE recurring_transactions
       SET last_processed_date = ?, next_due_date = ?

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-jwt-secret-transaction-balance-32-bytes';
@@ -24,5 +25,19 @@ describe('transaction balance checks', () => {
 
     expect(() => transactionPrivate.assertBalanceAllowed(staleAccount, -7500)).not.toThrow();
     expect(() => transactionPrivate.assertBalanceAllowed(freshAccount, -7500)).toThrow(/overdraft limit/i);
+  });
+
+  test('updateBalance throws and rolls back when the target account is missing', () => {
+    const marker = crypto.randomUUID();
+    const run = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO audit_logs (id, action, entity_type, entity_id, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(marker, 'BALANCE_ROLLBACK_TEST', 'test', marker, new Date().toISOString());
+      transactionPrivate.updateBalance(crypto.randomUUID(), crypto.randomUUID(), 100);
+    });
+
+    expect(run).toThrow(/Account balance update failed/);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE id = ?').get(marker).count).toBe(0);
   });
 });

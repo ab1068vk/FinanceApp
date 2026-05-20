@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { accountCurrentBalanceExpr, warnIfAccountBalanceMismatch } = require('../utils/accountBalance');
+const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
 const { amountToCents, computeBalanceDelta, serializeMoney } = require('../utils/money');
 const { pagination, paginationMeta } = require('../utils/pagination');
@@ -32,8 +33,9 @@ function updateStoredBalance(accountId, userId, delta) {
   if (!db.inTransaction) {
     logger.warn('Account balance updated outside transaction', { accountId, userId, delta });
   }
-  db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?')
+  const result = db.prepare('UPDATE accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(delta, nowIso(), accountId, userId);
+  assertSingleAccountBalanceUpdate(result, { accountId, userId, delta, operation: 'account.updateStoredBalance' });
 }
 
 function transactionsForAccountDelete(accountId, userId) {
