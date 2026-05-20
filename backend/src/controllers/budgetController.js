@@ -99,9 +99,10 @@ function assertNoBudgetOverlap(userId, categoryId, startDate, endDate, excludeId
 function budgetPercentUsed(amountValue, currentValue) {
   const amount = Number(amountValue || 0);
   const currentSpending = Number(currentValue || 0);
-  if (!Number.isFinite(currentSpending) || !Number.isFinite(amount) || amount === 0) {
+  if (!Number.isFinite(currentSpending) || !Number.isFinite(amount)) {
     return 0;
   }
+  // Zero-amount budgets are rejected by the API, but legacy rows should read as fully used once any spending exists.
   if (amount === 0) return currentSpending > 0 ? 100 : 0;
   return Math.round((currentSpending / amount) * 10000) / 100;
 }
@@ -228,4 +229,4 @@ function deleteBudget(req, res, next) {
   } catch (error) { return next(error); }
 }
 
-module.exports = { createBudget, getBudgets, getBudget, updateBudget, deleteBudget };
+module.exports = { budgetPercentUsed, createBudget, getBudgets, getBudget, updateBudget, deleteBudget };

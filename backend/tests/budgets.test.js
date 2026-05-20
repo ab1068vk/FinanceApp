@@ -10,6 +10,7 @@ process.env.ADMIN_PASSWORD_HASH = '';
 
 const app = require('../src/app');
 const { db, dbPath } = require('../database/db');
+const { budgetPercentUsed } = require('../src/controllers/budgetController');
 
 async function createSession(label = 'budget') {
   const credentials = {
@@ -58,6 +59,15 @@ describe('Budgets API', () => {
     other = await createSession('budget-other');
     account = await createAccount(owner.accessToken);
     category = await getExpenseCategory(owner.accessToken);
+  });
+
+  test.each([
+    [0, 0, 0],
+    [0, 50, 100],
+    [100, 50, 50],
+    [100, 150, 150],
+  ])('budgetPercentUsed(%s, %s) returns %s', (amount, currentSpending, expected) => {
+    expect(budgetPercentUsed(amount, currentSpending)).toBe(expected);
   });
 
   test('creates a budget for an allowed category', async () => {
@@ -127,6 +137,44 @@ describe('Budgets API', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({ ...basePayload, start_date: new Date('2027-05-01T00:00:00.000Z').toISOString(), end_date: new Date('2027-05-31T23:59:59.999Z').toISOString(), amount: '' })
       .expect(400);
+  });
+
+  test('calculates percent used for a minimum allowed budget amount', async () => {
+    const tinyBudget = await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        category_id: category.id,
+        amount: 0.01,
+        period: 'monthly',
+        start_date: new Date('2028-01-01T00:00:00.000Z').toISOString(),
+        end_date: new Date('2028-01-31T23:59:59.999Z').toISOString(),
+      })
+      .expect(201);
+
+    await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        account_id: account.id,
+        category_id: category.id,
+        type: 'expense',
+        amount: 0.01,
+        description: 'Minimum budget spend',
+        date: new Date('2028-01-10T12:00:00.000Z').toISOString(),
+      })
+      .expect(201);
+
+    const response = await request(app)
+      .get(`/api/budgets/${tinyBudget.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      amount: 0.01,
+      current_spending: 0.01,
+      percent_used: 100,
+    }));
   });
 
   test('lists budget spending and remaining amounts', async () => {
