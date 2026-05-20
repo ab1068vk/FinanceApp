@@ -11,7 +11,12 @@ const { serializeAuditValue } = require('../utils/audit');
 const { clientIp } = require('../utils/clientIp');
 const { blockSecurityIp, clearSecurityIp, listSecurityBlocks } = require('../middleware/securityMonitor');
 const { getOrCreateDefaultCashAccount } = require('../utils/defaultAccount');
-const { accountCurrentBalanceExpr, reconcileAccountBalances } = require('../utils/accountBalance');
+const {
+  accountCurrentBalanceExpr,
+  getAccountBalanceSnapshot,
+  reconcileAccountBalances,
+  warnIfAccountBalanceMismatch,
+} = require('../utils/accountBalance');
 const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
 const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
@@ -1450,6 +1455,7 @@ function createAccountBalanceCorrection(req, res, next) {
       });
       audit(req, 'ADMIN_CREATED_BALANCE_CORRECTION', 'account', account.id, { balance: account.balance, current_balance: derivedBalance }, { target_balance: targetBalance, delta, reason, transaction_id: correction.id });
     })();
+    warnIfAccountBalanceMismatch(getAccountBalanceSnapshot(account.id, account.user_id), { source: 'admin.createAccountBalanceCorrection' });
     return res.status(201).json(serializeMoney({ transaction: correction, account: db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id) }));
   } catch (error) {
     return next(error);
