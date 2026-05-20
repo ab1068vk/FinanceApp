@@ -963,8 +963,9 @@ function exportMyData(req, res, next) {
     const payload = {
       exported_at: nowIso(),
       user: sanitizeUser(getUserById(userId)),
+      // Include inactive accounts as user-owned export metadata; hidden transactions remain excluded below.
       accounts: db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY created_at ASC').all(userId),
-      transactions: db.prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, created_at DESC').all(userId),
+      transactions: db.prepare('SELECT * FROM transactions WHERE user_id = ? AND admin_deleted_at IS NULL ORDER BY date DESC, created_at DESC').all(userId),
       budgets: db.prepare('SELECT * FROM budgets WHERE user_id = ? ORDER BY start_date DESC, created_at DESC').all(userId),
       categories: db.prepare('SELECT * FROM categories WHERE user_id = ? ORDER BY sort_order ASC, name ASC').all(userId),
       audit_logs: db.prepare('SELECT * FROM audit_logs WHERE user_id = ? ORDER BY created_at DESC').all(userId),

@@ -34,6 +34,19 @@ async function registerAndLogin(overrides = {}) {
   return { ...login.body, credentials: data };
 }
 
+async function registerAdminAndLogin() {
+  const session = await registerAndLogin({
+    email: `admin-auth-${Date.now()}-${Math.random().toString(16).slice(2)}@financeapp.test`,
+    full_name: 'Auth Admin',
+  });
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', session.user.id);
+  const login = await request(app)
+    .post('/api/auth/login')
+    .send({ email: session.credentials.email, password: session.credentials.password })
+    .expect(200);
+  return { ...login.body, credentials: session.credentials };
+}
+
 afterAll(() => {
   db.close();
   for (const suffix of ['', '-wal', '-shm']) {
@@ -232,6 +245,66 @@ describe('Authentication API', () => {
       .expect(200);
     expect(accounts.body.data).toHaveLength(1);
     expect(accounts.body.data[0]).toEqual(expect.objectContaining({ name: 'Cash', type: 'cash' }));
+  });
+
+  test('data export excludes admin-deleted transactions while keeping visible transactions', async () => {
+    const admin = await registerAdminAndLogin();
+    const session = await registerAndLogin();
+    const account = await request(app)
+      .post('/api/accounts')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ name: 'Export Checking', type: 'checking', currency: 'USD', color: '#0F3460', icon: 'credit-card' })
+      .expect(201);
+    const categories = await request(app)
+      .get('/api/categories')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .expect(200);
+    const expenseCategory = categories.body.data.find((category) => category.type === 'expense');
+    const transactionDate = new Date().toISOString();
+
+    const visible = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({
+        account_id: account.body.id,
+        category_id: expenseCategory.id,
+        type: 'expense',
+        amount: 12,
+        description: 'Export visible',
+        date: transactionDate,
+      })
+      .expect(201);
+
+    const deleted = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({
+        account_id: account.body.id,
+        category_id: expenseCategory.id,
+        type: 'expense',
+        amount: 34,
+        description: 'Export deleted',
+        date: transactionDate,
+      })
+      .expect(201);
+
+    const visibleId = visible.body.transactions[0].id;
+    const deletedId = deleted.body.transactions[0].id;
+
+    await request(app)
+      .delete(`/api/admin/transactions/${deletedId}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ reason: 'Remove from user export' })
+      .expect(200);
+
+    const exported = await request(app)
+      .get('/api/auth/data')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .expect(200);
+
+    const exportedTransactionIds = exported.body.transactions.map((transaction) => transaction.id);
+    expect(exportedTransactionIds).toContain(visibleId);
+    expect(exportedTransactionIds).not.toContain(deletedId);
   });
 
   test('session summary returns active refresh token sessions', async () => {
