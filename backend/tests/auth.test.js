@@ -103,6 +103,64 @@ describe('Authentication API', () => {
     delete process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE;
   });
 
+  test('registration cleans up the user when verification email delivery fails', async () => {
+    const originalFetch = global.fetch;
+    const email = `delivery-fail-${Date.now()}@financeapp.test`;
+    const payload = {
+      email,
+      password: 'StrongPass1!',
+      full_name: 'Delivery Failure',
+    };
+
+    process.env.REQUIRE_EMAIL_VERIFICATION = 'true';
+    delete process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE;
+    process.env.EMAIL_VERIFICATION_WEBHOOK_URL = 'https://email.financeapp.test/verify';
+    global.fetch = jest.fn(async () => ({ ok: false, status: 503 }));
+
+    const before = {
+      users: db.prepare('SELECT COUNT(*) AS count FROM users').get().count,
+      accounts: db.prepare('SELECT COUNT(*) AS count FROM accounts').get().count,
+      tokens: db.prepare('SELECT COUNT(*) AS count FROM email_verification_tokens').get().count,
+    };
+
+    await request(app)
+      .post('/api/auth/register')
+      .send(payload)
+      .expect(503);
+
+    expect(db.prepare('SELECT id FROM users WHERE email = ?').get(email)).toBeUndefined();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM users').get().count).toBe(before.users);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM accounts').get().count).toBe(before.accounts);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM email_verification_tokens').get().count).toBe(before.tokens);
+
+    const resendAfterFailedRegistration = await request(app)
+      .post('/api/auth/resend-verification')
+      .send({ email })
+      .expect(200);
+    expect(resendAfterFailedRegistration.body.verificationToken).toBeUndefined();
+
+    process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE = 'true';
+    delete process.env.EMAIL_VERIFICATION_WEBHOOK_URL;
+    global.fetch = originalFetch;
+
+    const retry = await request(app)
+      .post('/api/auth/register')
+      .send(payload)
+      .expect(201);
+    expect(retry.body.verificationToken).toEqual(expect.any(String));
+
+    const resendAfterRetry = await request(app)
+      .post('/api/auth/resend-verification')
+      .send({ email })
+      .expect(200);
+    expect(resendAfterRetry.body.verificationToken).toEqual(expect.any(String));
+
+    delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    delete process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE;
+    delete process.env.EMAIL_VERIFICATION_WEBHOOK_URL;
+    global.fetch = originalFetch;
+  });
+
   test('register with weak password returns 400', async () => {
     const response = await request(app).post('/api/auth/register').send({
       email: `weak-${Date.now()}@financeapp.test`,
@@ -406,6 +464,50 @@ describe('Authentication API', () => {
       success: true,
       message: 'If an account exists for that email, a password reset token has been sent.',
     });
+  });
+
+  test('forgot password marks reset token used when delivery fails and allows retry', async () => {
+    const session = await registerAndLogin();
+    const originalFetch = global.fetch;
+    process.env.PASSWORD_RESET_WEBHOOK_URL = 'https://hooks.financeapp.test/reset';
+    process.env.PASSWORD_RESET_URL = 'https://app.financeapp.test/auth';
+    global.fetch = jest.fn(async () => ({ ok: false, status: 503 }));
+
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: session.credentials.email })
+      .expect(503);
+
+    const liveTokensAfterFailure = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM password_reset_tokens
+      WHERE user_id = ? AND used_at IS NULL
+    `).get(session.user.id).count;
+    expect(liveTokensAfterFailure).toBe(0);
+
+    const delivered = [];
+    global.fetch = jest.fn(async (url, options) => {
+      delivered.push({ url, body: JSON.parse(options.body) });
+      return { ok: true };
+    });
+
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: session.credentials.email })
+      .expect(200);
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].body.token).toEqual(expect.any(String));
+    const liveTokensAfterRetry = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM password_reset_tokens
+      WHERE user_id = ? AND used_at IS NULL
+    `).get(session.user.id).count;
+    expect(liveTokensAfterRetry).toBe(1);
+
+    delete process.env.PASSWORD_RESET_WEBHOOK_URL;
+    delete process.env.PASSWORD_RESET_URL;
+    global.fetch = originalFetch;
   });
 
   test('reset password token changes password and revokes sessions', async () => {

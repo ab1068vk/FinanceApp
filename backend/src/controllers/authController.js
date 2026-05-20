@@ -184,6 +184,16 @@ function createEmailVerificationToken(req, user) {
   return { verificationToken, expiresAt };
 }
 
+function cleanupFailedRegistration(userId, email) {
+  return db.transaction(() => {
+    db.prepare('DELETE FROM users WHERE id = ? AND email = ? AND email_verified_at IS NULL').run(userId, email);
+  })();
+}
+
+function cleanupFailedPasswordReset(userId) {
+  db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(nowIso(), userId);
+}
+
 function pruneRefreshTokens() {
   db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked = 1').run(nowIso());
 }
@@ -271,6 +281,7 @@ async function register(req, res, next) {
           email: maskEmail(email),
           error: deliveryError.message,
         });
+        cleanupFailedRegistration(userId, email);
         return res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
       }
       return res.status(201).json(registerResponse(verification.verificationToken));
@@ -530,6 +541,7 @@ async function forgotPassword(req, res, next) {
         email: maskEmail(user.email),
         error: deliveryError.message,
       });
+      cleanupFailedPasswordReset(user.id);
       return res.status(503).json({ error: 'Password reset email could not be sent. Please try again later.' });
     }
 
