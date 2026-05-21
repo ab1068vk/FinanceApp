@@ -128,7 +128,7 @@ npx expo start
 - Helmet, CORS allowlists, HPP protection, compression, request size limits, and input validation are enabled.
 - Audit logs record sensitive account, auth, transaction, and admin actions.
 - Production error responses avoid exposing stack traces.
-- Production deployments must terminate TLS before traffic reaches Express. Run the API behind a TLS-terminating reverse proxy, forward `X-Forwarded-Proto: https`, and set `TRUST_PROXY_HOPS` to the exact proxy hop count. The backend logs a production warning when HTTPS is not detected.
+- Production deployments must terminate TLS before traffic reaches Express. Run the API behind a TLS-terminating reverse proxy, forward `X-Forwarded-Proto: https`, and set `TRUST_PROXY_HOPS` to the exact proxy hop count. In production, requests that do not indicate HTTPS are rejected with `400 HTTPS required`; verify this header in the deployment checklist before exposing the API.
 - CSRF protection is enabled by default for browser-style state-changing requests using a per-session double-submit cookie. Native mobile API calls use Bearer tokens and are not treated as cookie-authenticated browser requests.
 - Admin webhook URLs must use HTTPS and cannot point to localhost or private network ranges. Webhook secrets are encrypted before they are stored in SQLite.
 

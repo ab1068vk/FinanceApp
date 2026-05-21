@@ -117,18 +117,21 @@ let warnedAboutHttpInProduction = false;
 app.use((req, res, next) => {
   if (process.env.NODE_ENV === 'production') {
     const forwardedProto = String(req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
-    const httpsDetected = req.secure || forwardedProto === 'https' || process.env.REQUIRE_HTTPS === 'true';
-    if (!httpsDetected && !warnedAboutHttpInProduction) {
-      warnedAboutHttpInProduction = true;
-      logger.warn('Production HTTPS warning', {
+    if (!req.secure && forwardedProto !== 'https') {
+      const payload = {
         warning: 'Production request did not indicate HTTPS. Run FinanceApp behind a TLS-terminating reverse proxy and forward X-Forwarded-Proto.',
         method: req.method,
         path: req.originalUrl,
         forwardedProto,
-      });
+      };
+      if (!warnedAboutHttpInProduction) {
+        warnedAboutHttpInProduction = true;
+        logger.warn('Production HTTPS enforcement', payload);
+      }
+      return res.status(400).json({ error: 'HTTPS required' });
     }
   }
-  next();
+  return next();
 });
 
 app.use(helmet({
