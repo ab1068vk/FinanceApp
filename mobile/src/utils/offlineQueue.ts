@@ -7,6 +7,8 @@ export interface QueuedMutation {
   url: string;
   data?: unknown;
   description: string;
+  optimisticTransactionId?: string;
+  optimisticTransactionDate?: string;
 }
 
 const STORAGE_KEY = 'offlineQueue';
@@ -47,6 +49,8 @@ export async function enqueue(mutation: Omit<QueuedMutation, 'id' | 'timestamp'>
     url: mutation.url,
     data: mutation.data,
     description: mutation.description,
+    optimisticTransactionId: mutation.optimisticTransactionId,
+    optimisticTransactionDate: mutation.optimisticTransactionDate,
   };
   await saveQueue([...queue, queued]);
   return queued;
@@ -60,4 +64,3 @@ export async function dequeue(id: string) {
 export async function clearQueue() {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
-

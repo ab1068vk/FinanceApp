@@ -1,11 +1,14 @@
 import NetInfo from '@react-native-community/netinfo';
+import axios from 'axios';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../services/api';
+import { getApiErrorMessage } from '../services/apiErrors';
 import { AppDispatch } from '../store';
 import { fetchAccounts } from '../store/slices/accountsSlice';
 import { fetchBudgets } from '../store/slices/budgetsSlice';
-import { fetchTransactions } from '../store/slices/transactionsSlice';
+import { fetchTransactions, transactionsActions } from '../store/slices/transactionsSlice';
 import { useAppDispatch } from '../store/hooks';
+import { showToast } from '../components/common/Toast';
 import { dequeue, getQueue, QueuedMutation } from '../utils/offlineQueue';
 
 function isOnlineState(state: { isConnected: boolean | null; isInternetReachable: boolean | null }) {
@@ -13,25 +16,61 @@ function isOnlineState(state: { isConnected: boolean | null; isInternetReachable
 }
 
 async function replayMutation(mutation: QueuedMutation) {
-  await api.request({
+  return api.request({
     method: mutation.method,
     url: mutation.url,
     data: mutation.data,
   });
 }
 
-export async function processOfflineQueue(dispatch: AppDispatch) {
-  const queue = await getQueue();
-  for (const mutation of queue) {
-    await replayMutation(mutation);
-    await dequeue(mutation.id);
-  }
+function isServerRejection(error: unknown) {
+  return axios.isAxiosError(error) && Boolean(error.response);
+}
 
-  await Promise.all([
+function describeTransactionFailure(mutation: QueuedMutation, reason: string) {
+  const date = mutation.optimisticTransactionDate
+    ? new Date(mutation.optimisticTransactionDate).toLocaleDateString()
+    : 'offline';
+  return `Transaction from ${date} could not be synced: ${reason}`;
+}
+
+async function refreshFinancialState(dispatch: AppDispatch) {
+  await Promise.allSettled([
     dispatch(fetchAccounts()).unwrap(),
     dispatch(fetchTransactions({ page: 1, limit: 20 })).unwrap(),
     dispatch(fetchBudgets()).unwrap(),
   ]);
+}
+
+export async function processOfflineQueue(dispatch: AppDispatch) {
+  const queue = await getQueue();
+  let attemptedMutation = false;
+
+  for (const mutation of queue) {
+    try {
+      await replayMutation(mutation);
+      attemptedMutation = true;
+      await dequeue(mutation.id);
+    } catch (error) {
+      if (!isServerRejection(error)) {
+        if (attemptedMutation) await refreshFinancialState(dispatch);
+        throw error;
+      }
+
+      attemptedMutation = true;
+      await dequeue(mutation.id);
+      if (mutation.optimisticTransactionId) {
+        dispatch(transactionsActions.removeTransaction(mutation.optimisticTransactionId));
+      }
+      showToast({
+        type: 'error',
+        text1: 'Offline sync failed',
+        text2: describeTransactionFailure(mutation, getApiErrorMessage(error, 'Server rejected the request')),
+      });
+    }
+  }
+
+  if (attemptedMutation || queue.length > 0) await refreshFinancialState(dispatch);
 }
 
 export function useOfflineQueue() {
@@ -66,4 +105,3 @@ export function useOfflineQueue() {
 
   return { isProcessingQueue, retryNow };
 }
-

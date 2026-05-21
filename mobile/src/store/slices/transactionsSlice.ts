@@ -25,6 +25,7 @@ export type Transaction = {
   updated_at?: string | null;
   category_name?: string;
   account_name?: string;
+  pending_sync?: boolean;
   [key: string]: unknown;
 };
 
@@ -173,13 +174,22 @@ export const createTransaction = createAsyncThunk<Transaction | Transaction[], C
       return response.data.transactions;
     } catch (error) {
       if (isNetworkError(error)) {
-        await enqueue({ method: 'POST', url: '/api/transactions', data, description: 'Create transaction' });
+        const optimisticId = tempId();
+        await enqueue({
+          method: 'POST',
+          url: '/api/transactions',
+          data,
+          description: 'Create transaction',
+          optimisticTransactionId: optimisticId,
+          optimisticTransactionDate: data.date,
+        });
         showToast({ type: 'info', text1: 'Saved offline', text2: 'Will sync when reconnected' });
         return {
           ...data,
-          id: tempId(),
+          id: optimisticId,
           category_id: data.category_id || '',
           date: data.date,
+          pending_sync: true,
           recurring: Boolean(data.recurring),
           created_at: new Date().toISOString(),
         };
@@ -303,6 +313,10 @@ const transactionsSlice = createSlice({
     setTransactionsError(state, action: PayloadAction<string | null>) {
       state.error = action.payload;
       state.isLoading = false;
+    },
+    removeTransaction(state, action: PayloadAction<string>) {
+      state.transactions = state.transactions.filter((transaction) => transaction.id !== action.payload);
+      if (state.selectedTransaction?.id === action.payload) state.selectedTransaction = null;
     },
   },
   extraReducers: (builder) => {
