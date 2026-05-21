@@ -52,6 +52,8 @@ MOBILE_APP_ORIGIN=financeapp://auth
 
 Use a provider app password or SMTP token, not your normal mailbox password. Verification links are sent through TLS/STARTTLS, raw tokens are not stored in the database, and tokens are not returned by API responses unless explicitly enabled for local development.
 
+If SMTP is not used, auth delivery webhooks can be configured with `PASSWORD_RESET_WEBHOOK_URL` and `EMAIL_VERIFICATION_WEBHOOK_URL`. These endpoints receive raw single-use authentication tokens so they can build reset and verification links. Only use trusted HTTPS endpoints outside localhost/private networks, and set `PASSWORD_RESET_WEBHOOK_SECRET` and `EMAIL_VERIFICATION_WEBHOOK_SECRET` (or shared `AUTH_DELIVERY_WEBHOOK_SECRET`) so receivers can verify the `X-Webhook-Signature` HMAC-SHA256 header.
+
 3. Start the backend:
 
 ```bash
@@ -127,10 +129,12 @@ npx expo start
 - SMTP delivery requires TLS by default, and email/webhook delivery failures are reported instead of silently pretending the email was sent.
 - Helmet, CORS allowlists, HPP protection, compression, request size limits, and input validation are enabled.
 - Audit logs record sensitive account, auth, transaction, and admin actions.
+- Audit logs record when raw password reset or email verification tokens are dispatched to auth delivery webhooks.
 - Production error responses avoid exposing stack traces.
 - Production deployments must terminate TLS before traffic reaches Express. Run the API behind a TLS-terminating reverse proxy, forward `X-Forwarded-Proto: https`, and set `TRUST_PROXY_HOPS` to the exact proxy hop count. In production, requests that do not indicate HTTPS are rejected with `400 HTTPS required`; verify this header in the deployment checklist before exposing the API.
 - CSRF protection is enabled by default for browser-style state-changing requests using a per-session double-submit cookie. Native mobile API calls use Bearer tokens and are not treated as cookie-authenticated browser requests.
 - Admin webhook URLs must use HTTPS and cannot point to localhost or private network ranges. Webhook secrets are encrypted before they are stored in SQLite.
+- Auth delivery webhook URLs follow the same HTTPS and private-network restrictions. Their request bodies are signed with `X-Webhook-Signature: sha256=<hmac>` using the configured delivery webhook secret.
 
 ## Admin Setup
 

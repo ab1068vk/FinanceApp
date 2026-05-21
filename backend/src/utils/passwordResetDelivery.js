@@ -1,5 +1,7 @@
 const logger = require('./logger');
 const { hashToken } = require('./security');
+const { assertSafeWebhookUrl } = require('./urlSafety');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 function maskEmail(value) {
@@ -23,15 +25,13 @@ function boolEnv(name, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
-function isLocalHttpUrl(url) {
-  return ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
-}
-
 function assertSecureDeliveryUrl(rawUrl, label) {
-  const url = new URL(rawUrl);
-  if (url.protocol === 'https:') return;
-  if (process.env.NODE_ENV !== 'production' && url.protocol === 'http:' && isLocalHttpUrl(url)) return;
-  throw new Error(`${label} must use HTTPS`);
+  try {
+    return assertSafeWebhookUrl(rawUrl);
+  } catch (error) {
+    const message = String(error.message || 'Webhook URL is not safe').replace(/^Webhook URL/, 'webhook URL');
+    throw new Error(`${label} ${message}`);
+  }
 }
 
 function browserFallbackUrlFor(token, pathSegment) {
@@ -151,17 +151,35 @@ function temporaryPasswordEmailContent({ temporaryPassword }) {
   };
 }
 
-async function deliverViaWebhook({ webhookUrl, email, token, actionUrl, fallbackUrl, expiresAt, tokenFieldName, urlFieldName, label }) {
-  assertSecureDeliveryUrl(webhookUrl, label);
-  const response = await fetch(webhookUrl, {
+function authDeliveryWebhookSecret(envName, label) {
+  const secret = process.env[envName] || process.env.AUTH_DELIVERY_WEBHOOK_SECRET;
+  if (!secret) {
+    throw new Error(`${label} webhook secret is required`);
+  }
+  return secret;
+}
+
+function webhookSignatureFor(body, secret) {
+  return `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
+}
+
+async function deliverViaWebhook({ webhookUrl, webhookSecret, email, token, actionUrl, fallbackUrl, expiresAt, tokenFieldName, urlFieldName, label }) {
+  const safeWebhookUrl = assertSecureDeliveryUrl(webhookUrl, label);
+  const body = JSON.stringify({ email, [tokenFieldName]: token, [urlFieldName]: actionUrl, fallbackUrl, expiresAt });
+  const response = await fetch(safeWebhookUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, [tokenFieldName]: token, [urlFieldName]: actionUrl, fallbackUrl, expiresAt }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Webhook-Signature': webhookSignatureFor(body, webhookSecret),
+    },
+    body,
   });
 
   if (!response.ok) {
     throw new Error(`${label} webhook failed with status ${response.status}`);
   }
+
+  return { channel: 'webhook', webhookUrl: safeWebhookUrl };
 }
 
 async function deliverViaSmtp({ email, kind, actionUrl, fallbackUrl, expiresAt }) {
@@ -212,8 +230,9 @@ async function deliverPasswordResetToken({ email, token, expiresAt }) {
   const fallbackUrl = browserFallbackUrlFor(token, 'reset-password');
 
   if (process.env.PASSWORD_RESET_WEBHOOK_URL) {
-    await deliverViaWebhook({
+    const delivery = await deliverViaWebhook({
       webhookUrl: process.env.PASSWORD_RESET_WEBHOOK_URL,
+      webhookSecret: authDeliveryWebhookSecret('PASSWORD_RESET_WEBHOOK_SECRET', 'Password reset'),
       email,
       token,
       actionUrl: resetUrl,
@@ -224,13 +243,13 @@ async function deliverPasswordResetToken({ email, token, expiresAt }) {
       label: 'Password reset',
     });
     logger.info('Password reset token delivered via webhook', { email: maskEmail(email), expiresAt });
-    return;
+    return delivery;
   }
 
   if (smtpConfigured()) {
     await deliverViaSmtp({ email, kind: 'password-reset', actionUrl: resetUrl, fallbackUrl, expiresAt });
     logger.info('Password reset token delivered via SMTP', { email: maskEmail(email), expiresAt });
-    return;
+    return { channel: 'smtp' };
   }
 
   if (!allowLocalTokenFallback('ALLOW_RESET_TOKEN_IN_RESPONSE')) {
@@ -244,6 +263,7 @@ async function deliverPasswordResetToken({ email, token, expiresAt }) {
     expiresAt,
     delivery: 'admin-log',
   });
+  return { channel: 'local-log' };
 }
 
 async function deliverEmailVerificationToken({ email, token, expiresAt }) {
@@ -262,8 +282,9 @@ async function deliverEmailVerificationToken({ email, token, expiresAt }) {
   }
 
   if (process.env.EMAIL_VERIFICATION_WEBHOOK_URL) {
-    await deliverViaWebhook({
+    const delivery = await deliverViaWebhook({
       webhookUrl: process.env.EMAIL_VERIFICATION_WEBHOOK_URL,
+      webhookSecret: authDeliveryWebhookSecret('EMAIL_VERIFICATION_WEBHOOK_SECRET', 'Email verification'),
       email,
       token,
       actionUrl: verificationUrl,
@@ -274,13 +295,13 @@ async function deliverEmailVerificationToken({ email, token, expiresAt }) {
       label: 'Email verification',
     });
     logger.info('Email verification token delivered via webhook', { email: maskEmail(email), expiresAt });
-    return;
+    return delivery;
   }
 
   if (smtpConfigured()) {
     await deliverViaSmtp({ email, kind: 'email-verification', actionUrl: verificationUrl, fallbackUrl, expiresAt });
     logger.info('Email verification token delivered via SMTP', { email: maskEmail(email), expiresAt });
-    return;
+    return { channel: 'smtp' };
   }
 
   if (!allowLocalTokenFallback('ALLOW_VERIFICATION_TOKEN_IN_RESPONSE')) {
@@ -294,6 +315,7 @@ async function deliverEmailVerificationToken({ email, token, expiresAt }) {
     expiresAt,
     delivery: 'admin-log',
   });
+  return { channel: 'local-log' };
 }
 
 async function deliverAdminTemporaryPassword({ email, temporaryPassword }) {
@@ -320,6 +342,8 @@ async function deliverAdminTemporaryPassword({ email, temporaryPassword }) {
 
 module.exports = {
   maskEmail,
+  assertSecureDeliveryUrl,
+  webhookSignatureFor,
   resetUrlFor,
   verificationUrlFor,
   deliverPasswordResetToken,

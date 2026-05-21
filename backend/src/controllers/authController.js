@@ -89,6 +89,32 @@ function writeSecurityLog(req, { userId = null, action, newValue }) {
   );
 }
 
+function webhookAuditTarget(webhookUrl) {
+  try {
+    const url = new URL(webhookUrl);
+    return { webhook_origin: url.origin, webhook_host: url.hostname };
+  } catch {
+    return { webhook_origin: null, webhook_host: null };
+  }
+}
+
+function auditAuthTokenWebhookDispatch(req, user, { action, credentialPurpose, webhookUrl, expiresAt }) {
+  writeAuditLog(req, {
+    userId: user.id,
+    action,
+    entityType: 'user',
+    entityId: user.id,
+    newValue: {
+      email: user.email,
+      delivery_channel: 'webhook',
+      credential_purpose: credentialPurpose,
+      sensitive_material: 'raw_authentication_token',
+      expires_at: expiresAt,
+      ...webhookAuditTarget(webhookUrl),
+    },
+  });
+}
+
 function getUserByEmail(email) {
   return db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
 }
@@ -275,6 +301,7 @@ async function register(req, res, next) {
     const securityStamp = newSecurityStamp();
 
     let verification;
+    let createdUser;
     const createUser = db.transaction(() => {
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, email_verified_at, security_stamp)
@@ -282,7 +309,7 @@ async function register(req, res, next) {
       `).run(userId, email, passwordHash, fullName, createdAt, requiresEmailVerification ? null : createdAt, securityStamp);
 
       const defaultAccount = createDefaultCashAccount(userId);
-      const createdUser = getUserById(userId);
+      createdUser = getUserById(userId);
 
       writeAuditLog(req, {
         userId,
@@ -308,7 +335,15 @@ async function register(req, res, next) {
     createUser();
     if (requiresEmailVerification && verification) {
       try {
-        await deliverEmailVerificationToken({ email, token: verification.verificationToken, expiresAt: verification.expiresAt });
+        const delivery = await deliverEmailVerificationToken({ email, token: verification.verificationToken, expiresAt: verification.expiresAt });
+        if (delivery?.channel === 'webhook') {
+          auditAuthTokenWebhookDispatch(req, createdUser, {
+            action: 'EMAIL_VERIFICATION_WEBHOOK_DISPATCHED',
+            credentialPurpose: 'email_verification',
+            webhookUrl: delivery.webhookUrl,
+            expiresAt: verification.expiresAt,
+          });
+        }
       } catch (deliveryError) {
         logger.error('Email verification delivery failed', {
           email: maskEmail(email),
@@ -583,7 +618,15 @@ async function forgotPassword(req, res, next) {
 
     createResetToken();
     try {
-      await deliverPasswordResetToken({ email: user.email, token: resetToken, expiresAt });
+      const delivery = await deliverPasswordResetToken({ email: user.email, token: resetToken, expiresAt });
+      if (delivery?.channel === 'webhook') {
+        auditAuthTokenWebhookDispatch(req, user, {
+          action: 'PASSWORD_RESET_WEBHOOK_DISPATCHED',
+          credentialPurpose: 'password_reset',
+          webhookUrl: delivery.webhookUrl,
+          expiresAt,
+        });
+      }
     } catch (deliveryError) {
       logger.error('Password reset delivery failed', {
         email: maskEmail(user.email),
@@ -723,7 +766,15 @@ async function resendVerification(req, res, next) {
 
     const verification = createEmailVerificationToken(req, user);
     try {
-      await deliverEmailVerificationToken({ email: user.email, token: verification.verificationToken, expiresAt: verification.expiresAt });
+      const delivery = await deliverEmailVerificationToken({ email: user.email, token: verification.verificationToken, expiresAt: verification.expiresAt });
+      if (delivery?.channel === 'webhook') {
+        auditAuthTokenWebhookDispatch(req, user, {
+          action: 'EMAIL_VERIFICATION_WEBHOOK_DISPATCHED',
+          credentialPurpose: 'email_verification',
+          webhookUrl: delivery.webhookUrl,
+          expiresAt: verification.expiresAt,
+        });
+      }
     } catch (deliveryError) {
       logger.error('Email verification delivery failed', {
         email: maskEmail(user.email),

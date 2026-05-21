@@ -1,6 +1,6 @@
 const { maskEmail, redactValue, serializeAuditValue } = require('../src/utils/audit');
 const { normalizeLogMessage, sanitizeLogText } = require('../src/utils/logger');
-const { resetUrlFor } = require('../src/utils/passwordResetDelivery');
+const { resetUrlFor, webhookSignatureFor } = require('../src/utils/passwordResetDelivery');
 const { assertJwtSecret } = require('../src/utils/security');
 
 describe('security utilities', () => {
@@ -38,6 +38,11 @@ describe('security utilities', () => {
     expect(url).toContain('/auth/reset-password/token%20value');
     expect(url).not.toContain('resetToken=');
     delete process.env.PASSWORD_RESET_URL;
+  });
+
+  test('webhook signatures use HMAC-SHA256 over the exact request body', () => {
+    const body = JSON.stringify({ email: 'user@example.com', token: 'raw-token' });
+    expect(webhookSignatureFor(body, 'shared-secret')).toBe('sha256=12b5c7e84742d3a9c653ce0aed202d7520852f7fe0209945d1432f2b3d307973');
   });
 
   test('JWT secret validator requires at least 32 bytes', () => {

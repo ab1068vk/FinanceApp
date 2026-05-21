@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
 
@@ -115,6 +116,7 @@ describe('Authentication API', () => {
     process.env.REQUIRE_EMAIL_VERIFICATION = 'true';
     delete process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE;
     process.env.EMAIL_VERIFICATION_WEBHOOK_URL = 'https://email.financeapp.test/verify';
+    process.env.EMAIL_VERIFICATION_WEBHOOK_SECRET = 'verify-webhook-secret';
     global.fetch = jest.fn(async () => ({ ok: false, status: 503 }));
 
     const before = {
@@ -158,6 +160,7 @@ describe('Authentication API', () => {
     delete process.env.REQUIRE_EMAIL_VERIFICATION;
     delete process.env.ALLOW_VERIFICATION_TOKEN_IN_RESPONSE;
     delete process.env.EMAIL_VERIFICATION_WEBHOOK_URL;
+    delete process.env.EMAIL_VERIFICATION_WEBHOOK_SECRET;
     global.fetch = originalFetch;
   });
 
@@ -525,6 +528,7 @@ describe('Authentication API', () => {
     const session = await registerAndLogin();
     const originalFetch = global.fetch;
     process.env.PASSWORD_RESET_WEBHOOK_URL = 'https://hooks.financeapp.test/reset';
+    process.env.PASSWORD_RESET_WEBHOOK_SECRET = 'reset-webhook-secret';
     process.env.PASSWORD_RESET_URL = 'https://app.financeapp.test/auth';
     global.fetch = jest.fn(async () => ({ ok: false, status: 503 }));
 
@@ -542,7 +546,7 @@ describe('Authentication API', () => {
 
     const delivered = [];
     global.fetch = jest.fn(async (url, options) => {
-      delivered.push({ url, body: JSON.parse(options.body) });
+      delivered.push({ url, headers: options.headers, body: JSON.parse(options.body), rawBody: options.body });
       return { ok: true };
     });
 
@@ -559,8 +563,52 @@ describe('Authentication API', () => {
       WHERE user_id = ? AND used_at IS NULL
     `).get(session.user.id).count;
     expect(liveTokensAfterRetry).toBe(1);
+    const expectedSignature = `sha256=${crypto.createHmac('sha256', process.env.PASSWORD_RESET_WEBHOOK_SECRET).update(delivered[0].rawBody).digest('hex')}`;
+    expect(delivered[0].headers['X-Webhook-Signature']).toBe(expectedSignature);
 
     delete process.env.PASSWORD_RESET_WEBHOOK_URL;
+    delete process.env.PASSWORD_RESET_WEBHOOK_SECRET;
+    delete process.env.PASSWORD_RESET_URL;
+    global.fetch = originalFetch;
+  });
+
+  test('forgot password rejects unsafe auth delivery webhook URLs', async () => {
+    const session = await registerAndLogin();
+    const originalFetch = global.fetch;
+    process.env.PASSWORD_RESET_WEBHOOK_SECRET = 'reset-webhook-secret';
+    process.env.PASSWORD_RESET_URL = 'https://app.financeapp.test/auth';
+    global.fetch = jest.fn(async () => ({ ok: true }));
+
+    process.env.PASSWORD_RESET_WEBHOOK_URL = 'http://hooks.financeapp.test/reset';
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: session.credentials.email })
+      .expect(503);
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    process.env.PASSWORD_RESET_WEBHOOK_URL = 'https://localhost/reset';
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: session.credentials.email })
+      .expect(503);
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    process.env.PASSWORD_RESET_WEBHOOK_URL = 'https://10.0.0.5/reset';
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: session.credentials.email })
+      .expect(503);
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    const liveTokens = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM password_reset_tokens
+      WHERE user_id = ? AND used_at IS NULL
+    `).get(session.user.id).count;
+    expect(liveTokens).toBe(0);
+
+    delete process.env.PASSWORD_RESET_WEBHOOK_URL;
+    delete process.env.PASSWORD_RESET_WEBHOOK_SECRET;
     delete process.env.PASSWORD_RESET_URL;
     global.fetch = originalFetch;
   });
@@ -569,10 +617,11 @@ describe('Authentication API', () => {
     const session = await registerAndLogin();
     const originalFetch = global.fetch;
     process.env.PASSWORD_RESET_WEBHOOK_URL = 'https://hooks.financeapp.test/reset';
+    process.env.PASSWORD_RESET_WEBHOOK_SECRET = 'reset-webhook-secret';
     process.env.PASSWORD_RESET_URL = 'https://app.financeapp.test/auth';
     const delivered = [];
     global.fetch = jest.fn(async (url, options) => {
-      delivered.push({ url, body: JSON.parse(options.body) });
+      delivered.push({ url, headers: options.headers, body: JSON.parse(options.body), rawBody: options.body });
       return { ok: true };
     });
 
@@ -587,6 +636,9 @@ describe('Authentication API', () => {
     expect(delivered[0].body.resetUrl).not.toContain('resetToken=');
     const resetToken = delivered[0].body.token;
     expect(resetToken).toEqual(expect.any(String));
+    const expectedSignature = `sha256=${crypto.createHmac('sha256', process.env.PASSWORD_RESET_WEBHOOK_SECRET).update(delivered[0].rawBody).digest('hex')}`;
+    expect(delivered[0].headers['X-Webhook-Signature']).toBe(expectedSignature);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM audit_logs WHERE action = ? AND user_id = ?').get('PASSWORD_RESET_WEBHOOK_DISPATCHED', session.user.id).count).toBe(1);
 
     await request(app)
       .post('/api/auth/reset-password')
@@ -616,6 +668,7 @@ describe('Authentication API', () => {
       .expect(400);
 
     delete process.env.PASSWORD_RESET_WEBHOOK_URL;
+    delete process.env.PASSWORD_RESET_WEBHOOK_SECRET;
     delete process.env.PASSWORD_RESET_URL;
     global.fetch = originalFetch;
   });

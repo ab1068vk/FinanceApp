@@ -140,6 +140,8 @@ export default function AdminToolsScreen() {
     pill: { borderRadius: 999, paddingHorizontal: theme.spacing.sm, paddingVertical: 4, backgroundColor: theme.colors.background },
     pillText: { color: theme.colors.text.secondary, fontSize: theme.typography.xs, fontWeight: '800' },
     rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm, marginTop: theme.spacing.xs },
+    warning: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.spacing.sm, borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: theme.colors.warning, backgroundColor: theme.colors.background, padding: theme.spacing.sm, marginBottom: theme.spacing.sm },
+    warningText: { flex: 1, color: theme.colors.text.primary, fontSize: theme.typography.sm, lineHeight: 20, fontWeight: '700' },
   }), [theme]);
 
   const load = useCallback(async () => {
@@ -498,6 +500,10 @@ export default function AdminToolsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.title}>Webhooks</Text>
+        <View style={styles.warning}>
+          <Feather name="alert-triangle" size={18} color={theme.colors.warning} />
+          <Text style={styles.warningText}>This webhook will receive raw authentication tokens. Only configure this with trusted, secured, HTTPS endpoints.</Text>
+        </View>
         <TextInput style={styles.input} value={webhookName} onChangeText={setWebhookName} placeholder="Webhook name" placeholderTextColor={theme.colors.text.light} />
         <TextInput style={styles.input} value={webhookUrl} onChangeText={setWebhookUrl} placeholder="https://example.com/webhook" placeholderTextColor={theme.colors.text.light} autoCapitalize="none" />
         <Pressable style={styles.fullButton} onPress={createWebhook} disabled={workingAction !== null}><Text style={styles.buttonText}>Create Webhook</Text></Pressable>

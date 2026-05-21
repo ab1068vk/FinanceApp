@@ -210,6 +210,10 @@ function auditSummary(log) {
       return `${target} signed out.`;
     case 'PASSWORD_CHANGED':
       return `${target} changed their password.`;
+    case 'PASSWORD_RESET_WEBHOOK_DISPATCHED':
+      return `A password reset token for ${target} was dispatched to an auth delivery webhook.`;
+    case 'EMAIL_VERIFICATION_WEBHOOK_DISPATCHED':
+      return `An email verification token for ${target} was dispatched to an auth delivery webhook.`;
     default:
       return `${actor} performed ${wordsFromAction(log.action)} on ${log.entity_type || 'the system'}${log.entity_id ? ` ${log.entity_id}` : ''}.`;
   }
