@@ -1,7 +1,7 @@
 import { NavigationContainer } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
 import { ActivityIndicator, Alert, AppState, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ import { loadStoredAuth, logoutUser, refreshAccessToken } from './src/store/slic
 import { API_BASE_URL } from './src/constants';
 import { authenticateWithBiometrics, getBiometricPreference } from './src/services/biometrics';
 import { reportClientError } from './src/services/clientErrors';
-import { detectRootedOrJailbrokenDevice } from './src/services/deviceSecurity';
+import { detectDeviceSecurityRisk } from './src/services/deviceSecurity';
 import { autoLockTimeoutMs, getAutoLockPreference } from './src/services/sessionLock';
 import { getJwtExpiryMs, isJwtExpired } from './src/utils/jwt';
 import { navigateFinanceDeepLink, parseFinanceDeepLink } from './src/navigation/deepLinks';
@@ -61,6 +61,22 @@ function AppBootstrap() {
   const [updateBannerVisible, setUpdateBannerVisible] = useState(false);
   const lastBackgroundAt = useRef<number | null>(null);
   const pendingInitialUrl = useRef<string | null>(null);
+  const securityAlertVisible = useRef(false);
+
+  const runDeviceSecurityCheck = useCallback((screen = 'startup') => {
+    void detectDeviceSecurityRisk({ screen })
+      .then((result) => {
+        if (!result.insecure || securityAlertVisible.current) return;
+        securityAlertVisible.current = true;
+        Alert.alert(
+          'Security Notice',
+          result.userMessage,
+          [{ text: 'OK', onPress: () => { securityAlertVisible.current = false; } }],
+          { cancelable: false },
+        );
+      })
+      .catch((err) => console.warn('Device security detection failed', err));
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -144,17 +160,8 @@ function AppBootstrap() {
 }, [isLocked]);
 
   useEffect(() => {
-    void detectRootedOrJailbrokenDevice()
-      .then((suspicious) => {
-        if (suspicious) {
-          Alert.alert(
-            'Security Notice',
-            'This device appears to be rooted or jailbroken. For your security, some features may be restricted.'
-          );
-        }
-      })
-      .catch((err) => console.warn('Root detection failed', err));
-  }, []);
+    runDeviceSecurityCheck('startup');
+  }, [runDeviceSecurityCheck]);
 
   useEffect(() => {
     let mounted = true;
@@ -248,6 +255,7 @@ function AppBootstrap() {
 
       if (nextState !== 'active') return;
       setAppIsInactive(false);
+      runDeviceSecurityCheck('foreground');
       if (!lastBackgroundAt.current || !isAuthenticated) return;
 
       void (async () => {
@@ -274,7 +282,7 @@ function AppBootstrap() {
     });
 
     return () => subscription.remove();
-  }, [accessToken, dispatch, isAuthenticated]);
+  }, [accessToken, dispatch, isAuthenticated, runDeviceSecurityCheck]);
 
   const unlock = async () => {
     const unlocked = await authenticateWithBiometrics('Unlock FinanceApp');
