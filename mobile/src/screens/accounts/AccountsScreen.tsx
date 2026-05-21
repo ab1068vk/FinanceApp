@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { useFocusEffect } from '@react-navigation/native';
@@ -8,12 +8,9 @@ import { AccountsStackParamList } from '../../navigation';
 import { accountsActions, fetchAccounts } from '../../store/slices/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { useTheme } from '../../theme';
+import { formatAccountBalanceSummary, groupAccountBalancesByCurrency, hasMixedCurrencies } from '../../utils/accountBalances';
 
 type Props = StackScreenProps<AccountsStackParamList, 'AccountsHome'>;
-
-function formatCurrency(amount: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount || 0);
-}
 
 export default function AccountsScreen({ navigation }: Props) {
   const theme = useTheme();
@@ -36,14 +33,20 @@ export default function AccountsScreen({ navigation }: Props) {
     }, [loadAccounts]),
   );
 
-  const netWorth = accounts.reduce((sum, account) => sum + Number(account.current_balance ?? account.balance ?? 0), 0);
+  const balanceGroups = useMemo(() => groupAccountBalancesByCurrency(accounts), [accounts]);
+  const balanceSummary = useMemo(
+    () => formatAccountBalanceSummary(balanceGroups, { maximumFractionDigits: 0 }),
+    [balanceGroups],
+  );
+  const mixedCurrencies = hasMixedCurrencies(balanceGroups);
 
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         <View>
           <Text style={styles.label}>Total balance</Text>
-          <Text style={styles.total}>{formatCurrency(netWorth)}</Text>
+          <Text style={styles.total}>{balanceSummary}</Text>
+          {mixedCurrencies ? <Text style={styles.totalNote}>Multiple currencies shown separately</Text> : null}
         </View>
         <TouchableOpacity style={styles.headerButton} onPress={() => navigation.navigate('AddAccount')}>
           <Feather name="plus" size={22} color="#FFFFFF" />
@@ -106,7 +109,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   label: { color: '#ADB5BD', fontSize: 13, fontWeight: '800' },
-  total: { color: '#FFFFFF', fontSize: 36, fontWeight: '900', marginTop: 8, letterSpacing: 0 },
+  total: { color: '#FFFFFF', fontSize: 30, lineHeight: 38, fontWeight: '900', marginTop: 8, letterSpacing: 0 },
+  totalNote: { color: '#ADB5BD', fontSize: 12, fontWeight: '700', marginTop: 4 },
   headerButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E94560', alignItems: 'center', justifyContent: 'center' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, backgroundColor: '#FDECEC', padding: 12, marginHorizontal: 18, marginTop: 14 },

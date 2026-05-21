@@ -19,6 +19,12 @@ import { fetchBudgets, type Budget } from '../../store/slices/budgetsSlice';
 import { type Transaction } from '../../store/slices/transactionsSlice';
 import { useAppDispatch } from '../../store/hooks';
 import { useTheme } from '../../theme';
+import {
+  accountBalance as accountBalanceValue,
+  formatAccountBalanceSummary,
+  groupAccountBalancesByCurrency,
+  hasMixedCurrencies,
+} from '../../utils/accountBalances';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import type { FeatherIconName } from '../../utils/icons';
 
@@ -77,10 +83,6 @@ function periodRange(range: OverviewRange) {
 function amountValue(value: unknown) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? amount : 0;
-}
-
-function accountBalance(account: Account) {
-  return amountValue(account.current_balance ?? account.balance);
 }
 
 function accountTypeLabel(type: string) {
@@ -154,13 +156,11 @@ export default function OverviewScreen({ navigation }: Props) {
   );
 
   const overview = useMemo(() => {
-    const totalAssets = data.accounts
-      .filter((account) => account.type !== 'credit')
-      .reduce((sum, account) => sum + accountBalance(account), 0);
-    const totalCredit = data.accounts
+    const assetGroups = groupAccountBalancesByCurrency(data.accounts.filter((account) => account.type !== 'credit'));
+    const creditGroups = groupAccountBalancesByCurrency(data.accounts
       .filter((account) => account.type === 'credit')
-      .reduce((sum, account) => sum + Math.abs(accountBalance(account)), 0);
-    const netWorth = data.accounts.reduce((sum, account) => sum + accountBalance(account), 0);
+      .map((account) => ({ ...account, current_balance: Math.abs(accountBalanceValue(account)) })));
+    const netWorthGroups = groupAccountBalancesByCurrency(data.accounts);
     const savingsRate = data.summary.total_income > 0 ? (data.summary.net / data.summary.total_income) * 100 : 0;
     const largestExpense = expenseGroups(data.summary)[0];
     const budgetLimit = data.budgets.reduce((sum, budget) => sum + amountValue(budget.amount), 0);
@@ -170,9 +170,9 @@ export default function OverviewScreen({ navigation }: Props) {
     const activeBudgets = data.budgets.filter((budget) => !budget.end_date || new Date(budget.end_date) >= new Date()).length;
 
     return {
-      totalAssets,
-      totalCredit,
-      netWorth,
+      assetGroups,
+      creditGroups,
+      netWorthGroups,
       savingsRate,
       largestExpense,
       budgetLimit,
@@ -184,6 +184,10 @@ export default function OverviewScreen({ navigation }: Props) {
       cashflowAverage: data.transactions.length ? data.summary.net / data.transactions.length : 0,
     };
   }, [data]);
+
+  const netWorthDisplay = formatAccountBalanceSummary(overview.netWorthGroups, { maximumFractionDigits: 0 });
+  const creditUsedDisplay = formatAccountBalanceSummary(overview.creditGroups, { maximumFractionDigits: 0 });
+  const mixedNetWorthCurrencies = hasMixedCurrencies(overview.netWorthGroups);
 
   if (loading && !refreshing) {
     return (
@@ -229,7 +233,8 @@ export default function OverviewScreen({ navigation }: Props) {
 
         <View style={styles.heroCard}>
           <Text style={styles.heroLabel}>Net worth</Text>
-          <Text style={styles.heroValue}>{formatCurrency(overview.netWorth)}</Text>
+          <Text style={styles.heroValue}>{netWorthDisplay}</Text>
+          {mixedNetWorthCurrencies ? <Text style={styles.heroNote}>Multiple currencies shown separately</Text> : null}
           <View style={styles.heroMetrics}>
             <HeroMetric label="Income" value={formatCurrency(data.summary.total_income)} color={theme.colors.success} />
             <HeroMetric label="Expenses" value={formatCurrency(data.summary.total_expense)} color={theme.colors.danger} />
@@ -239,7 +244,7 @@ export default function OverviewScreen({ navigation }: Props) {
 
         <View style={styles.insightGrid}>
           <InsightCard icon="trending-up" label="Savings rate" value={`${overview.savingsRate.toFixed(1)}%`} tone={overview.savingsRate >= 0 ? theme.colors.success : theme.colors.danger} />
-          <InsightCard icon="credit-card" label="Credit used" value={formatCurrency(overview.totalCredit)} tone={theme.colors.warning} />
+          <InsightCard icon="credit-card" label="Credit used" value={creditUsedDisplay} tone={theme.colors.warning} />
           <InsightCard icon="pie-chart" label="Budget used" value={`${(overview.budgetUsed * 100).toFixed(1)}%`} tone={theme.colors.accent} />
           <InsightCard icon="activity" label="Avg. movement" value={formatCurrency(overview.cashflowAverage)} tone={theme.colors.highlight} />
         </View>
@@ -254,7 +259,7 @@ export default function OverviewScreen({ navigation }: Props) {
                 icon={(account.icon as FeatherIconName) || 'credit-card'}
                 label={account.name}
                 detail={accountTypeLabel(account.type)}
-                value={formatCurrency(accountBalance(account), account.currency)}
+                value={formatCurrency(accountBalanceValue(account), account.currency)}
                 color={account.color || theme.colors.accent}
                 onPress={() => rootNav.navigate('Accounts', { screen: 'AccountDetail', params: { id: account.id } })}
               />
@@ -426,7 +431,8 @@ const styles = StyleSheet.create({
   rangeTextActive: { color: '#1A1A2E' },
   heroCard: { backgroundColor: '#1A1A2E', borderRadius: 18, padding: 20, marginBottom: 16 },
   heroLabel: { color: '#ADB5BD', fontSize: 13, fontWeight: '800' },
-  heroValue: { color: '#FFFFFF', fontSize: 37, fontWeight: '900', marginTop: 7, letterSpacing: 0 },
+  heroValue: { color: '#FFFFFF', fontSize: 31, lineHeight: 39, fontWeight: '900', marginTop: 7, letterSpacing: 0 },
+  heroNote: { color: '#ADB5BD', fontSize: 12, fontWeight: '700', lineHeight: 17, marginTop: 7 },
   heroMetrics: { flexDirection: 'row', gap: 10, marginTop: 18 },
   heroMetric: { flex: 1, minWidth: 0 },
   heroMetricLabel: { color: '#ADB5BD', fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },

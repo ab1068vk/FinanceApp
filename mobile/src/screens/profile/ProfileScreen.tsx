@@ -10,6 +10,7 @@ import { fetchAccounts } from '../../store/slices/accountsSlice';
 import { fetchTransactions } from '../../store/slices/transactionsSlice';
 import { logoutUser } from '../../store/slices/authSlice';
 import { ProfileStackParamList } from '../../navigation';
+import { formatAccountBalanceSummary, groupAccountBalancesByCurrency, hasMixedCurrencies } from '../../utils/accountBalances';
 import type { FeatherIconName } from '../../utils/icons';
 
 type Props = StackScreenProps<ProfileStackParamList, 'ProfileHome'>;
@@ -26,7 +27,12 @@ export default function ProfileScreen({ navigation, route }: Props) {
   const transactions = useAppSelector((state) => state.transactions.transactions);
   const budgets = useAppSelector((state) => state.budgets.budgets);
   const [refreshing, setRefreshing] = useState(false);
-  const totalBalance = useMemo(() => accounts.reduce((sum, account) => sum + Number(account.current_balance ?? account.balance ?? 0), 0), [accounts]);
+  const balanceGroups = useMemo(() => groupAccountBalancesByCurrency(accounts), [accounts]);
+  const balanceSummary = useMemo(
+    () => formatAccountBalanceSummary(balanceGroups, { maximumFractionDigits: 0 }),
+    [balanceGroups],
+  );
+  const mixedCurrencies = hasMixedCurrencies(balanceGroups);
 
   const loadProfileData = useCallback(async () => {
     setRefreshing(true);
@@ -90,7 +96,8 @@ export default function ProfileScreen({ navigation, route }: Props) {
 
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>Total Balance</Text>
-          <Text style={styles.summaryValue}>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalBalance)}</Text>
+          <Text style={styles.summaryValue}>{balanceSummary}</Text>
+          {mixedCurrencies ? <Text style={styles.summaryNote}>Shown separately because accounts use multiple currencies.</Text> : null}
         </View>
 
         <View style={styles.actions}>
@@ -140,7 +147,8 @@ const styles = StyleSheet.create({
   statLabel: { color: '#6C757D', fontSize: 12, fontWeight: '800', marginTop: 4 },
   summaryCard: { marginHorizontal: 20, marginTop: 18, borderRadius: 16, backgroundColor: '#FFFFFF', padding: 18 },
   summaryLabel: { color: '#6C757D', fontSize: 13, fontWeight: '900' },
-  summaryValue: { color: '#1A1A2E', fontSize: 30, fontWeight: '900', marginTop: 8 },
+  summaryValue: { color: '#1A1A2E', fontSize: 26, lineHeight: 34, fontWeight: '900', marginTop: 8 },
+  summaryNote: { color: '#6C757D', fontSize: 12, fontWeight: '700', lineHeight: 17, marginTop: 8 },
   actions: { marginHorizontal: 20, marginTop: 22, borderRadius: 16, backgroundColor: '#FFFFFF', overflow: 'hidden' },
   actionRow: { minHeight: 58, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F1F3F5' },
   actionIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0F346014', alignItems: 'center', justifyContent: 'center', marginRight: 10 },

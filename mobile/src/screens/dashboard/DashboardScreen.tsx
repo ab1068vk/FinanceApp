@@ -23,6 +23,7 @@ import { Transaction, fetchBudgets, transactionsActions } from '../../store';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { accountsActions, fetchAccounts } from '../../store/slices/accountsSlice';
 import { useTheme } from '../../theme';
+import { formatAccountBalanceSummary, groupAccountBalancesByCurrency, hasMixedCurrencies } from '../../utils/accountBalances';
 import { monthRange } from '../../utils/dateRanges';
 import type { FeatherIconName } from '../../utils/icons';
 import { buildNotifications } from '../../utils/notifications';
@@ -77,11 +78,15 @@ export default function DashboardScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [budgetAlertsEnabled, setBudgetAlertsEnabled] = useState(true);
 
-  const netWorth = useMemo(
-    () => accounts.reduce((sum, account) => sum + Number(account.current_balance ?? account.balance ?? 0), 0),
-    [accounts]
+  const netWorthGroups = useMemo(() => groupAccountBalancesByCurrency(accounts), [accounts]);
+  const netWorthDisplay = useMemo(
+    () => formatAccountBalanceSummary(netWorthGroups, { maximumFractionDigits: 0 }),
+    [netWorthGroups],
   );
+  const mixedNetWorthCurrencies = hasMixedCurrencies(netWorthGroups);
+  const netWorth = netWorthGroups.length === 1 ? netWorthGroups[0]?.amount || 0 : 0;
   const monthlyChange = (() => {
+    if (mixedNetWorthCurrencies) return null;
     if (netWorth === 0 || monthlySummary.net === 0) return 0;
     const raw = (monthlySummary.net / Math.abs(netWorth)) * 100;
     return Math.max(-100, Math.min(100, raw));
@@ -172,13 +177,17 @@ export default function DashboardScreen({ navigation }: Props) {
 
             <View style={styles.netWorthCard}>
               <Text style={styles.netWorthLabel}>Total Net Worth</Text>
-              <Text style={styles.netWorthValue}>{formatCurrency(netWorth, true)}</Text>
-              <View style={styles.changeRow}>
-                <Feather name={monthlyChange >= 0 ? 'arrow-up-right' : 'arrow-down-right'} size={15} color={monthlyChange >= 0 ? theme.colors.success : theme.colors.danger} />
-                <Text style={[styles.changeText, { color: monthlyChange >= 0 ? theme.colors.success : theme.colors.danger }]}>
-                  {Math.abs(monthlyChange).toFixed(1)}% vs last month
-                </Text>
-              </View>
+              <Text style={styles.netWorthValue}>{netWorthDisplay}</Text>
+              {monthlyChange === null ? (
+                <Text style={styles.netWorthNote}>Multiple currencies shown separately</Text>
+              ) : (
+                <View style={styles.changeRow}>
+                  <Feather name={monthlyChange >= 0 ? 'arrow-up-right' : 'arrow-down-right'} size={15} color={monthlyChange >= 0 ? theme.colors.success : theme.colors.danger} />
+                  <Text style={[styles.changeText, { color: monthlyChange >= 0 ? theme.colors.success : theme.colors.danger }]}>
+                    {Math.abs(monthlyChange).toFixed(1)}% vs last month
+                  </Text>
+                </View>
+              )}
               <View style={styles.netWorthMetrics}>
                 <View style={styles.netWorthMetric}>
                   <Text style={styles.metricLabel}>Income</Text>
@@ -391,7 +400,8 @@ const styles = StyleSheet.create({
   bellBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
   netWorthCard: { alignItems: 'center', marginTop: 34 },
   netWorthLabel: { color: '#ADB5BD', fontSize: 14, fontWeight: '700' },
-  netWorthValue: { color: '#FFFFFF', fontSize: 44, fontWeight: '900', marginTop: 8, letterSpacing: 0 },
+  netWorthValue: { color: '#FFFFFF', fontSize: 34, lineHeight: 42, fontWeight: '900', marginTop: 8, letterSpacing: 0, textAlign: 'center' },
+  netWorthNote: { color: '#ADB5BD', fontSize: 12, fontWeight: '700', marginTop: 8, textAlign: 'center' },
   changeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   changeText: { fontSize: 13, fontWeight: '800', marginLeft: 5 },
   netWorthMetrics: {

@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { Account } from '../../store/slices/accountsSlice';
 import { useTheme } from '../../theme';
+import { formatCurrency } from '../../utils/formatters';
 import { featherIconName, type FeatherIconName } from '../../utils/icons';
 
 type Props = {
@@ -20,10 +21,6 @@ const iconByType: Record<string, FeatherIconName> = {
   investment: 'trending-up',
   cash: 'pocket',
 };
-
-function formatCurrency(amount: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount || 0);
-}
 
 export function AccountCard({ account, selected = false, addCard = false, wide = false, onPress }: Props) {
   const theme = useTheme();

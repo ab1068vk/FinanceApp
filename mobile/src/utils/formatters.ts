@@ -1,7 +1,7 @@
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 
-export function formatCurrency(amount = 0, currencyCode = 'USD', locale = 'en-US') {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency: currencyCode }).format(Number(amount) || 0);
+export function formatCurrency(amount = 0, currencyCode = 'USD', locale = 'en-US', options: Intl.NumberFormatOptions = {}) {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: currencyCode, ...options }).format(Number(amount) || 0);
 }
 
 export function formatDate(date: string | Date, dateStyle: Intl.DateTimeFormatOptions['dateStyle'] = 'medium', locale = 'en-US') {
