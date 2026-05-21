@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
+const zlib = require('zlib');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-jwt-secret-for-admin-suite-32-bytes';
@@ -115,6 +116,25 @@ describe('Admin API', () => {
       .get('/api/admin/users')
       .set('Authorization', `Bearer ${managedUser.accessToken}`)
       .expect(403);
+  });
+
+  test('downloads database backup as a gzip-compressed SQLite file', async () => {
+    const response = await request(app)
+      .get('/api/admin/database/backup')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => callback(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+
+    expect(response.headers['content-type']).toContain('application/gzip');
+    expect(response.headers['content-disposition']).toMatch(/filename="financeapp-\d+\.sqlite\.gz"/);
+    expect(Buffer.isBuffer(response.body)).toBe(true);
+    const sqliteBackup = zlib.gunzipSync(response.body);
+    expect(sqliteBackup.subarray(0, 16).toString('utf8')).toBe('SQLite format 3\0');
   });
 
   test('lists users and returns user detail summaries', async () => {

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { pipeline } = require('stream');
 const zlib = require('zlib');
 const v8 = require('v8');
 const { db, dbPath } = require('../../database/db');
@@ -1777,20 +1778,24 @@ function vacuumDatabase(req, res, next) {
 }
 
 async function downloadDatabaseBackup(req, res, next) {
+  let tmpPath;
   try {
     audit(req, 'ADMIN_DOWNLOADED_DATABASE_BACKUP', 'database', 'main', null, { db_size_mb: getDbSizeMb() });
-    const tmpPath = path.join(os.tmpdir(), `backup-${Date.now()}.db`);
+    tmpPath = path.join(os.tmpdir(), `backup-${Date.now()}.db`);
     await db.backup(tmpPath);
     res.setHeader('Content-Type', 'application/gzip');
     res.setHeader('Content-Disposition', `attachment; filename="financeapp-${Date.now()}.sqlite.gz"`);
     const stream = fs.createReadStream(tmpPath);
-    stream.on('end', () => fs.unlink(tmpPath, () => {}));
-    stream.on('error', (err) => {
-      logger.error('Backup stream error', { error: err.message });
+    pipeline(stream, zlib.createGzip(), res, (err) => {
       fs.unlink(tmpPath, () => {});
+      if (err) {
+        logger.error('Backup gzip stream error', { error: err.message });
+        if (!res.headersSent) next(err);
+      }
     });
-    return stream.pipe(zlib.createGzip()).pipe(res);
+    return undefined;
   } catch (error) {
+    if (tmpPath) fs.unlink(tmpPath, () => {});
     return next(error);
   }
 }
