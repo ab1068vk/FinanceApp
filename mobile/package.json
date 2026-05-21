@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && npm run test:unit",
     "test:unit": "jest --runInBand",
+    "check:production-pinning": "node scripts/assertProductionTlsPinning.js --required",
+    "build:production": "npm run check:production-pinning && eas build --profile production",
+    "eas-build-pre-install": "node scripts/assertProductionTlsPinning.js",
     "lint": "eslint . --ext .ts,.tsx --ignore-pattern node_modules",
     "lint:fix": "npm run lint -- --fix"
   },

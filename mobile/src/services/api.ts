@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../constants';
 import { authActions, store } from '../store';
 import { attachApiErrorMessage } from './apiErrors';
 import { clearTokens, getTokens, saveTokens } from './secureStorage';
+import { configureTlsPinning } from './tlsPinning';
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
@@ -18,7 +19,7 @@ let isRefreshing = false;
 let failedQueue: FailedQueueItem[] = [];
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
-let pinningConfigured = false;
+const pinningConfigured = configureTlsPinning();
 
 const processQueue = (error: unknown, token: string | null) => {
   const queue = failedQueue;
@@ -53,19 +54,6 @@ export const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
-
-try {
-  const certHash = process.env.EXPO_PUBLIC_API_CERT_HASH;
-  const CertificatePinning = require('expo-certificate-pinning');
-  if (certHash && CertificatePinning?.initializeSslPinning) {
-    CertificatePinning.initializeSslPinning({ [API_BASE_URL]: { publicKeyHashes: [certHash] } });
-    pinningConfigured = true;
-  }
-} catch {
-  if (process.env.NODE_ENV === 'production') {
-    console.warn('SSL certificate pinning is not active. Install/configure expo-certificate-pinning for production builds.');
-  }
-}
 
 api.interceptors.request.use(async (config) => {
   const method = String(config.method || 'get').toLowerCase();

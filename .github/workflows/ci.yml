@@ -66,6 +66,30 @@ jobs:
       - run: npm test
         working-directory: mobile
 
+  mobile-production-pinning-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+        working-directory: mobile
+      - name: Production build fails without TLS pin
+        run: |
+          if npm run check:production-pinning; then
+            echo "Expected missing EXPO_PUBLIC_API_CERT_HASH to fail"
+            exit 1
+          fi
+        working-directory: mobile
+      - name: Production build accepts configured TLS pin
+        run: npm run check:production-pinning
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_CERT_HASH: sha256/test-ci-pin
+
   lint:
     runs-on: ubuntu-latest
     steps:
