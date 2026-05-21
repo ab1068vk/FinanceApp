@@ -87,6 +87,7 @@ validateEnvironment();
 
 const app = require('./app');
 const { db, purgeDeletedUserArchives } = require('../database/db');
+const { INSTANCE_ID, runWithJobLock } = require('./utils/jobLocks');
 
 const PORT = Number(process.env.PORT) || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -95,6 +96,26 @@ const DELETED_USER_ARCHIVE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RECURRING_TRANSACTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const BALANCE_RECONCILE_INTERVAL_MS = Number(process.env.BALANCE_RECONCILE_INTERVAL_MS) || 6 * 60 * 60 * 1000;
+const JOB_LOCKS = {
+  refreshTokenCleanup: { name: 'refresh-token-cleanup', ttlMs: REFRESH_TOKEN_CLEANUP_INTERVAL_MS * 2 },
+  deletedUserArchiveCleanup: { name: 'deleted-user-archive-cleanup', ttlMs: DELETED_USER_ARCHIVE_CLEANUP_INTERVAL_MS * 2 },
+  recurringTransactions: { name: 'recurring-transaction-processing', ttlMs: RECURRING_TRANSACTION_INTERVAL_MS * 2 },
+  balanceReconciliation: { name: 'account-balance-reconciliation', ttlMs: BALANCE_RECONCILE_INTERVAL_MS * 2 },
+  databaseBackup: { name: 'database-backup', ttlMs: BACKUP_CHECK_INTERVAL_MS * 2 },
+};
+
+function configuredInstanceCount() {
+  const raw = process.env.INSTANCE_COUNT || process.env.WEB_CONCURRENCY || process.env.pm2_instances;
+  const count = Number(raw);
+  return Number.isFinite(count) ? count : 1;
+}
+
+if (configuredInstanceCount() > 1) {
+  logger.warn('Multiple backend instances configured; scheduled jobs will coordinate through SQLite job locks', {
+    instanceId: INSTANCE_ID,
+    instanceCount: configuredInstanceCount(),
+  });
+}
 
 function cleanupRefreshTokens() {
   const now = new Date().toISOString();
@@ -107,41 +128,21 @@ function cleanupRefreshTokens() {
 }
 
 const refreshTokenCleanupTimer = setInterval(() => {
-  try {
-    cleanupRefreshTokens();
-  } catch (error) {
-    logger.error('Refresh token cleanup failed', { error: error.message });
-  }
+  void runScheduledJob(JOB_LOCKS.refreshTokenCleanup, cleanupRefreshTokens, 'Refresh token cleanup failed');
 }, REFRESH_TOKEN_CLEANUP_INTERVAL_MS);
 refreshTokenCleanupTimer.unref();
 
-try {
-  purgeDeletedUserArchives();
-} catch (error) {
-  logger.error('Deleted user archive cleanup failed', { error: error.message });
-}
+void runScheduledJob(JOB_LOCKS.deletedUserArchiveCleanup, purgeDeletedUserArchives, 'Deleted user archive cleanup failed');
 
 const deletedUserArchiveCleanupTimer = setInterval(() => {
-  try {
-    purgeDeletedUserArchives();
-  } catch (error) {
-    logger.error('Deleted user archive cleanup failed', { error: error.message });
-  }
+  void runScheduledJob(JOB_LOCKS.deletedUserArchiveCleanup, purgeDeletedUserArchives, 'Deleted user archive cleanup failed');
 }, DELETED_USER_ARCHIVE_CLEANUP_INTERVAL_MS);
 deletedUserArchiveCleanupTimer.unref();
 
-try {
-  processRecurringTransactions();
-} catch (error) {
-  logger.error('Recurring transaction processor failed', { error: error.message });
-}
+void runScheduledJob(JOB_LOCKS.recurringTransactions, processRecurringTransactions, 'Recurring transaction processor failed');
 
 const recurringTransactionTimer = setInterval(() => {
-  try {
-    processRecurringTransactions();
-  } catch (error) {
-    logger.error('Recurring transaction processor failed', { error: error.message });
-  }
+  void runScheduledJob(JOB_LOCKS.recurringTransactions, processRecurringTransactions, 'Recurring transaction processor failed');
 }, RECURRING_TRANSACTION_INTERVAL_MS);
 recurringTransactionTimer.unref();
 
@@ -155,18 +156,10 @@ function runBalanceReconciliation() {
   });
 }
 
-try {
-  runBalanceReconciliation();
-} catch (error) {
-  logger.error('Account balance reconciliation failed', { error: error.message });
-}
+void runScheduledJob(JOB_LOCKS.balanceReconciliation, runBalanceReconciliation, 'Account balance reconciliation failed');
 
 const balanceReconcileTimer = setInterval(() => {
-  try {
-    runBalanceReconciliation();
-  } catch (error) {
-    logger.error('Account balance reconciliation failed', { error: error.message });
-  }
+  void runScheduledJob(JOB_LOCKS.balanceReconciliation, runBalanceReconciliation, 'Account balance reconciliation failed');
 }, BALANCE_RECONCILE_INTERVAL_MS);
 balanceReconcileTimer.unref();
 
@@ -179,11 +172,18 @@ function backupDue(now = new Date()) {
 
 async function runBackupIfDue() {
   if (!backupDue()) return;
-  try {
+  await runScheduledJob(JOB_LOCKS.databaseBackup, async () => {
     await runDatabaseBackup();
     lastBackupDate = new Date().toISOString().slice(0, 10);
+  }, 'SQLite backup failed');
+}
+
+async function runScheduledJob(lockConfig, job, errorMessage) {
+  try {
+    return await runWithJobLock(lockConfig.name, { ttlMs: lockConfig.ttlMs }, job);
   } catch (error) {
-    logger.error('SQLite backup failed', { error: error.message });
+    logger.error(errorMessage, { error: error.message, jobName: lockConfig.name, instanceId: INSTANCE_ID });
+    return { acquired: false, error };
   }
 }
 

@@ -10,6 +10,7 @@ process.env.ADMIN_PASSWORD_HASH = '';
 
 const { db, dbPath } = require('../database/db');
 const { addFrequency, processRecurringTransactions } = require('../src/utils/recurringProcessor');
+const { runWithJobLock } = require('../src/utils/jobLocks');
 
 function nowIso() {
   return new Date().toISOString();
@@ -168,5 +169,34 @@ describe('Recurring transaction processor', () => {
       last_processed_date: '2026-05-06',
       next_due_date: '2026-05-07',
     });
+  });
+
+  test('job lock prevents concurrent scheduled recurring processors from double-posting', async () => {
+    db.prepare('DELETE FROM job_locks WHERE job_name = ?').run('recurring-transaction-processing');
+    const user = createUser('recurring-lock');
+    const account = createAccount(user.id, { balance: 100, overdraft_limit: 0 });
+    const category = createCategory(user.id, 'expense');
+    createRule(user.id, account.id, category.id, { amount: 10, frequency: 'daily' });
+
+    let releaseWork;
+    let firstRun;
+    const firstStarted = new Promise((resolve) => {
+      firstRun = runWithJobLock('recurring-transaction-processing', { ttlMs: 1000, instanceId: 'instance-a' }, async () => {
+        processRecurringTransactions(new Date('2026-05-06T08:00:00.000Z'));
+        resolve();
+        await new Promise((resolveWork) => { releaseWork = resolveWork; });
+      });
+    });
+
+    await firstStarted;
+    const secondRun = await runWithJobLock('recurring-transaction-processing', { ttlMs: 1000, instanceId: 'instance-b' }, async () => {
+      processRecurringTransactions(new Date('2026-05-06T08:00:00.000Z'));
+    });
+
+    expect(secondRun).toEqual({ acquired: false });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM transactions WHERE user_id = ? AND account_id = ?').get(user.id, account.id).count).toBe(1);
+
+    releaseWork();
+    await expect(firstRun).resolves.toEqual({ acquired: true, result: undefined });
   });
 });

@@ -383,6 +383,12 @@ function createTables() {
       updated_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS job_locks (
+      job_name TEXT PRIMARY KEY,
+      locked_at TEXT NOT NULL,
+      instance_id TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
@@ -418,6 +424,7 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_user ON announcement_dismissals(user_id);
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
     CREATE INDEX IF NOT EXISTS idx_security_ip_blocks_blocked_until ON security_ip_blocks(blocked_until);
+    CREATE INDEX IF NOT EXISTS idx_job_locks_locked_at ON job_locks(locked_at);
     CREATE INDEX IF NOT EXISTS idx_recurring_transactions_due ON recurring_transactions(is_active, next_due_date);
     CREATE INDEX IF NOT EXISTS idx_recurring_transactions_user_id ON recurring_transactions(user_id);
     CREATE INDEX IF NOT EXISTS idx_recurring_transactions_account_id ON recurring_transactions(account_id);
@@ -786,6 +793,13 @@ function ensureSchemaUpdates() {
       PRIMARY KEY (user_id, type),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS job_locks (
+      job_name TEXT PRIMARY KEY,
+      locked_at TEXT NOT NULL,
+      instance_id TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_locks_locked_at ON job_locks(locked_at);
   `);
 
   migrateMoneyColumnsToCents();
@@ -1144,6 +1158,19 @@ const schemaMigrations = [
           WHERE status = 'open';
         CREATE INDEX IF NOT EXISTS idx_account_balance_drifts_status ON account_balance_drifts(status, detected_at);
         CREATE INDEX IF NOT EXISTS idx_account_balance_drifts_user ON account_balance_drifts(user_id, status);
+      `);
+    },
+  },
+  {
+    version: 3,
+    up() {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS job_locks (
+          job_name TEXT PRIMARY KEY,
+          locked_at TEXT NOT NULL,
+          instance_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_job_locks_locked_at ON job_locks(locked_at);
       `);
     },
   },

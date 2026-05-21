@@ -38,6 +38,7 @@ describe('schema migration runner', () => {
 
     expect(finalVersion).toBe(highestVersion);
     expect(currentSchemaVersion()).toBe(highestVersion);
+    expect(tableExists('job_locks')).toBe(true);
   });
 
   test('DB at version N runs only migrations above N', () => {
