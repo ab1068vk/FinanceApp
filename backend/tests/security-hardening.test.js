@@ -164,6 +164,36 @@ describe('Security hardening regressions', () => {
       .expect(401);
   });
 
+  test('demoting an admin revokes their active admin API tokens', async () => {
+    const actingAdmin = await createAdminSession();
+    const demotedAdmin = await createAdminSession();
+    const created = await request(app)
+      .post('/api/admin/api-tokens')
+      .set('Authorization', `Bearer ${demotedAdmin.accessToken}`)
+      .send({ name: 'Demotion token', scopes: ['read:users'] })
+      .expect(201);
+
+    await request(app)
+      .get('/api/admin/dashboard')
+      .set('Authorization', `Bearer ${created.body.token}`)
+      .expect(200);
+
+    await request(app)
+      .put(`/api/admin/users/${demotedAdmin.user.id}/role`)
+      .set('Authorization', `Bearer ${actingAdmin.accessToken}`)
+      .send({ role: 'user' })
+      .expect(200);
+
+    const tokenRow = db.prepare('SELECT is_active, revoked_at FROM admin_api_tokens WHERE id = ?').get(created.body.id);
+    expect(tokenRow.is_active).toBe(0);
+    expect(tokenRow.revoked_at).toEqual(expect.any(String));
+
+    await request(app)
+      .get('/api/admin/dashboard')
+      .set('Authorization', `Bearer ${created.body.token}`)
+      .expect(401);
+  });
+
   test('admin session revocation invalidates existing access tokens', async () => {
     const admin = await createAdminSession();
     const user = await registerAndLogin('revoke-target');

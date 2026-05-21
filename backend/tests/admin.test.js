@@ -595,6 +595,21 @@ describe('Admin API', () => {
       .expect(200);
     expect(includeDeleted.body.data.some((tx) => tx.id === createdTx.id && tx.admin_delete_reason === 'Fraud review duplicate')).toBe(true);
 
+    const transactionDeleteNotification = await request(app)
+      .get('/api/auth/notifications')
+      .set('Authorization', `Bearer ${target.accessToken}`)
+      .expect(200);
+    expect(transactionDeleteNotification.body.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'admin-transaction-removed',
+        title: 'Transaction removed by admin',
+        data: expect.objectContaining({
+          transaction_id: createdTx.id,
+          related_count: 1,
+        }),
+      }),
+    ]));
+
     const adminDeleted = await request(app)
       .get('/api/admin/transactions?admin_deleted=true')
       .set('Authorization', `Bearer ${admin.accessToken}`)

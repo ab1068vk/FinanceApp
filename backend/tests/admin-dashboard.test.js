@@ -74,7 +74,10 @@ describe('Admin dashboard transaction analytics', () => {
     const user = await createSession('dashboard-user');
     const account = await createAccount(user.accessToken);
     const category = await createExpenseCategory(user.accessToken);
-    const transactionDate = new Date().toISOString();
+    const transactionAt = new Date();
+    transactionAt.setDate(transactionAt.getDate() - 1);
+    transactionAt.setUTCHours(12, 0, 0, 0);
+    const transactionDate = transactionAt.toISOString();
     const dashboardDate = transactionDate.slice(0, 10);
 
     await createExpense(user.accessToken, account.id, category.id, 40, transactionDate);

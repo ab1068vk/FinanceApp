@@ -18,7 +18,7 @@ const {
   warnIfAccountBalanceMismatch,
 } = require('../utils/accountBalance');
 const { assertSingleAccountBalanceUpdate } = require('../utils/accountBalanceUpdate');
-const { amountToCents, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
+const { amountToCents, centsToAmount, computeBalanceDelta, parseBoolField, serializeMoney } = require('../utils/money');
 const { assertSafeWebhookUrl } = require('../utils/urlSafety');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { deliverAdminTemporaryPassword } = require('../utils/passwordResetDelivery');
@@ -775,14 +775,25 @@ function updateUserRole(req, res, next) {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     let updated;
+    let revokedApiTokens = 0;
     db.transaction(() => {
       const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
       if (!currentUser) throw Object.assign(new Error('User not found'), { statusCode: 404 });
       if (req.body.role !== 'admin' && wouldRemoveLastActiveAdmin(currentUser)) throw Object.assign(new Error('At least one active admin must remain'), { statusCode: 409 });
       db.prepare('UPDATE users SET role = ?, security_stamp = ?, updated_at = ? WHERE id = ?').run(req.body.role, newSecurityStamp(), nowIso(), req.params.id);
       db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(req.params.id);
+      if (currentUser.role === 'admin' && req.body.role === 'user') {
+        revokedApiTokens = db.prepare(`
+          UPDATE admin_api_tokens
+          SET is_active = 0, revoked_at = ?
+          WHERE created_by = ? AND is_active = 1 AND revoked_at IS NULL
+        `).run(nowIso(), req.params.id).changes;
+      }
       updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
       audit(req, 'ADMIN_UPDATED_USER_ROLE', 'user', req.params.id, sanitizeUser(user), sanitizeUser(updated));
+      if (revokedApiTokens > 0) {
+        audit(req, 'ADMIN_REVOKED_DEMOTED_USER_API_TOKENS', 'user', req.params.id, null, { revoked_api_tokens: revokedApiTokens });
+      }
     })();
     return res.json(sanitizeUser(updated));
   } catch (error) {
@@ -1305,6 +1316,20 @@ function adminSoftDeleteTransaction(req, res, next) {
         `).run(deletedAt, req.user.id, reason, deletedAt, item.id);
       }
       audit(req, 'ADMIN_SOFT_DELETED_TRANSACTION', 'transaction', req.params.id, related, { reason, deleted_at: deletedAt, related_count: related.length });
+      createUserNotification(
+        tx.user_id,
+        'admin-transaction-removed',
+        'Transaction removed by admin',
+        `A transaction${tx.description ? ` "${tx.description}"` : ''} for ${centsToAmount(tx.amount).toFixed(2)} on ${tx.date.slice(0, 10)} was reviewed and removed by an administrator.`,
+        {
+          transaction_id: tx.id,
+          description: tx.description,
+          amount: tx.amount,
+          date: tx.date,
+          removed_at: deletedAt,
+          related_count: related.length,
+        }
+      );
     })();
     return res.json({ success: true, deleted: related.length, reason });
   } catch (error) {

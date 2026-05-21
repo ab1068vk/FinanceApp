@@ -200,7 +200,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/admin', adminRoutes);
 
-if (process.env.NODE_ENV !== 'production') {
+if (String(process.env.ENABLE_SWAGGER || '').toLowerCase() === 'true') {
   try {
     const swaggerJsdoc = require('swagger-jsdoc');
     const swaggerUi = require('swagger-ui-express');
